@@ -1,0 +1,95 @@
+`timescale 1ps / 1ps
+
+// Board implementation wrapper.  Only package-connected ports are exposed;
+// configuration and debug/status signals remain internal so implementation
+// does not require artificial pin assignments.
+module mac_fifo_dma_ddr4_board_top (
+  input  wire        sw3_1,
+  input  wire        sw4_1,
+
+  input  wire        gtx_clk_p,
+  input  wire        gtx_clk_n,
+  input  wire        refclk_p,
+  input  wire        refclk_n,
+  input  wire        s_axi_aclk_p,
+  input  wire        s_axi_aclk_n,
+
+  output wire [3:0]  rgmii_txd,
+  output wire        rgmii_tx_ctl,
+  output wire        rgmii_txc,
+  input  wire [3:0]  rgmii_rxd,
+  input  wire        rgmii_rx_ctl,
+  input  wire        rgmii_rxc,
+  inout  wire        mdio,
+  output wire        mdc,
+  output wire        phy_resetn,
+
+  output wire [3:0]  led_t,
+
+  input  wire        c0_sys_clk_p,
+  input  wire        c0_sys_clk_n,
+  output wire        c0_ddr4_act_n,
+  output wire [16:0] c0_ddr4_adr,
+  output wire [1:0]  c0_ddr4_ba,
+  output wire [1:0]  c0_ddr4_bg,
+  output wire [0:0]  c0_ddr4_cke,
+  output wire [0:0]  c0_ddr4_odt,
+  output wire [0:0]  c0_ddr4_cs_n,
+  output wire [0:0]  c0_ddr4_ck_t,
+  output wire [0:0]  c0_ddr4_ck_c,
+  output wire        c0_ddr4_reset_n,
+  inout  wire [8:0]  c0_ddr4_dm_dbi_n,
+  inout  wire [71:0] c0_ddr4_dq,
+  inout  wire [8:0]  c0_ddr4_dqs_c,
+  inout  wire [8:0]  c0_ddr4_dqs_t
+);
+
+  mac_fifo_dma_ddr4_top core_i (
+    .sw3_1(sw3_1),
+    .sw4_1(sw4_1),
+    .gtx_clk_p(gtx_clk_p),
+    .gtx_clk_n(gtx_clk_n),
+    .refclk_p(refclk_p),
+    .refclk_n(refclk_n),
+    .tx_ifg_delay(8'h00),
+    .pause_req(1'b0),
+    .pause_val(16'h0000),
+    .rgmii_txd(rgmii_txd),
+    .rgmii_tx_ctl(rgmii_tx_ctl),
+    .rgmii_txc(rgmii_txc),
+    .rgmii_rxd(rgmii_rxd),
+    .rgmii_rx_ctl(rgmii_rx_ctl),
+    .rgmii_rxc(rgmii_rxc),
+    .mdio(mdio),
+    .mdc(mdc),
+    .phy_resetn(phy_resetn),
+    .s_axi_aclk_p(s_axi_aclk_p),
+    .s_axi_aclk_n(s_axi_aclk_n),
+    .s_axi_awaddr(12'h000),
+    .s_axi_awvalid(1'b0),
+    .s_axi_wdata(32'h0000_0000),
+    .s_axi_wvalid(1'b0),
+    .s_axi_bready(1'b1),
+    .s_axi_araddr(12'h000),
+    .s_axi_arvalid(1'b0),
+    .s_axi_rready(1'b1),
+    .c0_sys_clk_p(c0_sys_clk_p),
+    .c0_sys_clk_n(c0_sys_clk_n),
+    .c0_ddr4_act_n(c0_ddr4_act_n),
+    .c0_ddr4_adr(c0_ddr4_adr),
+    .c0_ddr4_ba(c0_ddr4_ba),
+    .c0_ddr4_bg(c0_ddr4_bg),
+    .c0_ddr4_cke(c0_ddr4_cke),
+    .c0_ddr4_odt(c0_ddr4_odt),
+    .c0_ddr4_cs_n(c0_ddr4_cs_n),
+    .c0_ddr4_ck_t(c0_ddr4_ck_t),
+    .c0_ddr4_ck_c(c0_ddr4_ck_c),
+    .c0_ddr4_reset_n(c0_ddr4_reset_n),
+    .c0_ddr4_dm_dbi_n(c0_ddr4_dm_dbi_n),
+    .c0_ddr4_dq(c0_ddr4_dq),
+    .c0_ddr4_dqs_c(c0_ddr4_dqs_c),
+    .c0_ddr4_dqs_t(c0_ddr4_dqs_t),
+    .led_t(led_t)
+  );
+
+endmodule

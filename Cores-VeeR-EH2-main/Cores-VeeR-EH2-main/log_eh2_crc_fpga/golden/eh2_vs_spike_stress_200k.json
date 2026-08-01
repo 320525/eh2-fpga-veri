@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "eh2_count": 199920,
+  "spike_count": 199920,
+  "exact_matches": 199920,
+  "accepted_waw_zero": 0,
+  "missing_eh2_count": 0,
+  "missing_spike_count": 0,
+  "missing_eh2_sample": [],
+  "missing_spike_sample": [],
+  "mismatches": []
+}

@@ -1,0 +1,23 @@
+{
+  "algorithm": "CRC-64/ECMA-182 pair plus G/XOR/SUM",
+  "source": "D:\\share\\spike_1000_current.log",
+  "stopped_harts": [
+    0
+  ],
+  "commit_count": {
+    "0": 899
+  },
+  "packages": [
+    {
+      "hart": 0,
+      "package": 0,
+      "count": 899,
+      "xor0": "0f679f9999355134",
+      "xor1": "9909e9725ab66071",
+      "sum0": "cbf08f5dd8aeb6b6",
+      "sum1": "44ab72f45137c99f",
+      "sum2": "4763eb0bc0cdf491",
+      "sum3": "cf8ccff5b2143cd9"
+    }
+  ]
+}

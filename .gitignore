@@ -1,0 +1,102 @@
+# Codex/agent workspaces and temporary staging
+.agents/
+**/.agents/
+**/agent/
+**/.codex/
+**/.codex_*/
+**/windows_agent/
+**/tmp/
+**/.tmp*/
+
+# Vivado generated state and simulation output
+**/.Xil/
+**/.srcs/
+**/*.runs/
+**/*.sim/
+**/*.cache/
+**/*.gen/
+**/*.hw/
+**/*.ip_user_files/
+**/xsim.dir/
+**/vivado_tmp/
+**/build/vivado_temp_impl/
+*.jou
+*.log
+*.pb
+*.str
+*.wdb
+*.wcfg
+*.vcd
+*.vpd
+*.rpt
+*.rpx
+*.dcp
+
+# The MAC build script consumes this small compatible debug-hub checkpoint.
+!mac_fifo_dma_proj/board_build/reference_dbg_hub.dcp
+
+# Synplify generated databases/reports.  EDIF deliverables are retained via LFS.
+**/synlog/
+**/syntmp/
+**/rev_*/dm/
+**/rev_*/synwork/
+**/rev_*/.recordref_modgen
+**/rev_*/scratchproject.prs
+**/rev_*/fvpr_characteristics.txt
+**/rev_*/run_options.txt
+*.srr
+*.srm
+*.srd
+*.srs
+*.sap
+*.map
+*.xdb
+*.xdm
+*.pdb
+*.areasrr
+*.sdf
+*.vm
+**/rev_*/*.htm
+**/rev_*/*.db
+
+# Software/tool caches
+**/__pycache__/
+*.pyc
+*.pyo
+*.o
+*.obj
+*.exe
+hs_err_pid*.dmp
+
+# Large verification artifacts that can be regenerated
+eh2fpga_veri_system/artifacts/build/
+eh2fpga_veri_system/artifacts/sim/*.log
+eh2fpga_veri_system/artifacts/sim/*_structs.txt
+eh2fpga_veri_system/artifacts/sim/*actual_structs.txt
+**/*_structs.txt
+**/*actual_structs.txt
+eh2fpga_veri_system/output/board/*
+!eh2fpga_veri_system/output/board/*.bit
+eh2_veri_iss_proj/reports/
+eth_tx/reports/
+eth_tx/checkpoints/
+
+# Intermediate/obsolete MAC variants; the active RTL is under source/eth.
+mac_fifo_dma_proj/filter_change_original/
+mac_fifo_dma_proj/filter_change_work/
+mac_fifo_dma_proj/board_build/*
+!mac_fifo_dma_proj/board_build/reference_dbg_hub.dcp
+!mac_fifo_dma_proj/board_build/mac_fifo_dma_ddr4_board_top.bit
+
+# Keep only the delivered bitstream from generated implementation output.
+Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/log_eh2_crc_fpga/vivado_build/output/*
+!Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/log_eh2_crc_fpga/vivado_build/output/eh2_crc_fpga_top.bit
+
+# Tool-created root diagnostics
+xvlog.log
+xvlog.pb
+**/clockInfo.txt
+**/historyRestored.txt
+**/FinalUnmatchedCellsToUnplace.txt
+**/iter_*_CongestedCLBsAndNets.txt
+**/tight_setup_hold_pins.txt

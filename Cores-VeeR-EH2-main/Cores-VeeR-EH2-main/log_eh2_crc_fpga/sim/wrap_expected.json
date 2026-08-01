@@ -1,0 +1,227 @@
+{
+  "packages_per_hart": 10,
+  "items_per_package": 65536,
+  "algorithm": "CRC-64/ECMA pair plus G/XOR/SUM",
+  "results": [
+    {
+      "hart": 0,
+      "package": 0,
+      "count": 65536,
+      "xor0": "d122c6c932fbfb1c",
+      "xor1": "935b8ce5e79fa5c2",
+      "sum0": "1fd9dd3bae940f1a",
+      "sum1": "22f15089b31f04f6",
+      "sum2": "01ddef16465e2227",
+      "sum3": "688e4bf94416a02e"
+    },
+    {
+      "hart": 0,
+      "package": 1,
+      "count": 65536,
+      "xor0": "5584def07e52ec50",
+      "xor1": "43eb692ea56178ba",
+      "sum0": "7358d50c0d569324",
+      "sum1": "521f1c372ab1aa68",
+      "sum2": "0b6a79dd972b33ed",
+      "sum3": "327cf97df6a552ab"
+    },
+    {
+      "hart": 0,
+      "package": 2,
+      "count": 65536,
+      "xor0": "32fda0871c798d27",
+      "xor1": "2211c32f637e0653",
+      "sum0": "abae823e3844e899",
+      "sum1": "d2c49fda45303dfb",
+      "sum2": "8e607d4c6367286a",
+      "sum3": "bce60770bc9443fc"
+    },
+    {
+      "hart": 0,
+      "package": 3,
+      "count": 65536,
+      "xor0": "51fcd1fcd63c30b0",
+      "xor1": "e74b5fe7e1e6a12d",
+      "sum0": "634235302499b1ba",
+      "sum1": "6bd7230e7fd5f757",
+      "sum2": "5fe3c304cce4ab02",
+      "sum3": "77ec9157e4f73bd8"
+    },
+    {
+      "hart": 0,
+      "package": 4,
+      "count": 65536,
+      "xor0": "c622b9e55813ab41",
+      "xor1": "6ac4f54d87d3c657",
+      "sum0": "4002650393a47083",
+      "sum1": "dbd87fcae1dee571",
+      "sum2": "49e4e94bec2119d3",
+      "sum3": "f01204e8f2a487bb"
+    },
+    {
+      "hart": 0,
+      "package": 5,
+      "count": 65536,
+      "xor0": "e5e430318433b4b2",
+      "xor1": "0731cd37a1330162",
+      "sum0": "0f152fc0bdc8e86a",
+      "sum1": "dbc2b7fe3eb3edae",
+      "sum2": "7b9fef4bb57c0177",
+      "sum3": "0ffe10b01cdfed60"
+    },
+    {
+      "hart": 0,
+      "package": 6,
+      "count": 65536,
+      "xor0": "307bb2f5c01a9437",
+      "xor1": "79093ab40d9295bf",
+      "sum0": "6c310f3c1604d673",
+      "sum1": "b80bac035e4d409d",
+      "sum2": "41117950d6fd3665",
+      "sum3": "0e6b399d3346f8fc"
+    },
+    {
+      "hart": 0,
+      "package": 7,
+      "count": 65536,
+      "xor0": "d742949cdc7e0594",
+      "xor1": "7967010c4403ab1d",
+      "sum0": "f58388d5d7dd054c",
+      "sum1": "bbbaa5c19f937b3b",
+      "sum2": "a49a288e0d1e11e5",
+      "sum3": "b76a3f96f47b10ee"
+    },
+    {
+      "hart": 0,
+      "package": 8,
+      "count": 65536,
+      "xor0": "091a3f9387d12281",
+      "xor1": "def1ac509f77534f",
+      "sum0": "abaf0b85da261dd1",
+      "sum1": "90a4e89482f82993",
+      "sum2": "965e250fc8ae9da8",
+      "sum3": "ca87fda357227079"
+    },
+    {
+      "hart": 0,
+      "package": 9,
+      "count": 65536,
+      "xor0": "5b51cf2ab232b2d7",
+      "xor1": "bd2e2d0bb1897f33",
+      "sum0": "c730a7ffc72f82cb",
+      "sum1": "174960eaa13f120f",
+      "sum2": "05b8993ac9fb1b61",
+      "sum3": "cbfa3a9733609633"
+    },
+    {
+      "hart": 1,
+      "package": 0,
+      "count": 65536,
+      "xor0": "e9d6f6ce65c73e68",
+      "xor1": "ba925d3bcea69b5e",
+      "sum0": "0d5343f95bc87ec6",
+      "sum1": "c8492872aaab4886",
+      "sum2": "5d3fcab27c574295",
+      "sum3": "5b003e7b81f45f6a"
+    },
+    {
+      "hart": 1,
+      "package": 1,
+      "count": 65536,
+      "xor0": "be75d9c10bb0a6c8",
+      "xor1": "f962ee5d9e0e35c6",
+      "sum0": "d180bafac32e89d4",
+      "sum1": "a9748fe92317de34",
+      "sum2": "002366ac4486638b",
+      "sum3": "4e209de251775d5d"
+    },
+    {
+      "hart": 1,
+      "package": 2,
+      "count": 65536,
+      "xor0": "5a06ed96a2783753",
+      "xor1": "4e3bbdc39be252ad",
+      "sum0": "e2687f0cbda568c9",
+      "sum1": "1d0ab6108f38300b",
+      "sum2": "162f4ac235715b32",
+      "sum3": "6257d6e11042864c"
+    },
+    {
+      "hart": 1,
+      "package": 3,
+      "count": 65536,
+      "xor0": "4cd76d9886ad3ab4",
+      "xor1": "3b6da762573c5313",
+      "sum0": "0b3899ed260ff10e",
+      "sum1": "8c1efabf1b1c8a13",
+      "sum2": "5710d1b13cb82c56",
+      "sum3": "541939d31e3ee330"
+    },
+    {
+      "hart": 1,
+      "package": 4,
+      "count": 65536,
+      "xor0": "f70f6c04b960dc31",
+      "xor1": "f54f273c4f492e4f",
+      "sum0": "506db8eb9482bfd3",
+      "sum1": "4fa360bb8c97bff7",
+      "sum2": "64c6242b9dce0951",
+      "sum3": "5124e6ed66f07bad"
+    },
+    {
+      "hart": 1,
+      "package": 5,
+      "count": 65536,
+      "xor0": "cf89c6b635ad985a",
+      "xor1": "7f2e27933ca9dec2",
+      "sum0": "4d1f1bbdfbda4bb6",
+      "sum1": "110be10577b8bd0a",
+      "sum2": "1fd1ef28348bfe85",
+      "sum3": "85223e86f415cf40"
+    },
+    {
+      "hart": 1,
+      "package": 6,
+      "count": 65536,
+      "xor0": "6e8dcce41519678b",
+      "xor1": "6764dbc0cf999417",
+      "sum0": "579b835086d60f0b",
+      "sum1": "e82e8de8a6a26953",
+      "sum2": "aca7e4f26a63decf",
+      "sum3": "a5d87d208e500aa4"
+    },
+    {
+      "hart": 1,
+      "package": 7,
+      "count": 65536,
+      "xor0": "88d4bf92d77f1638",
+      "xor1": "5d4fc42fc86513fb",
+      "sum0": "6f63550b93667288",
+      "sum1": "6d6b5c297814f1a3",
+      "sum2": "5e56fbe5c7b0d15f",
+      "sum3": "4cce9409f9d4403a"
+    },
+    {
+      "hart": 1,
+      "package": 8,
+      "count": 65536,
+      "xor0": "ed5631955d1625b1",
+      "xor1": "136cbbfdc28a2a29",
+      "sum0": "eb8717ed0f387801",
+      "sum1": "8090c472adc620fb",
+      "sum2": "bd7aa45899bc2a34",
+      "sum3": "481d22cce15eb427"
+    },
+    {
+      "hart": 1,
+      "package": 9,
+      "count": 65536,
+      "xor0": "f5bac14e25e8ce37",
+      "xor1": "02891465f919810d",
+      "sum0": "3b6fb1040a1d5d07",
+      "sum1": "5ee78e28fabf0fa3",
+      "sum2": "4efa52261916ef87",
+      "sum3": "b53e03b5e2fdf3a5"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+
+agent/fpga_stress200k/output/stress_200k_dualhart.elf:     file format elf32-littleriscv
+
+
+Disassembly of section .text:
+
+80000000 <_start>:
+80000000:	f1402473          	csrrs	s0,mhartid,zero
+80000004:	00013117          	auipc	sp,0x13
+80000008:	ffc10113          	addi	sp,sp,-4 # 80013000 <_end>
+8000000c:	00a41293          	slli	t0,s0,0xa
+80000010:	40510133          	sub	sp,sp,t0
+80000014:	00010497          	auipc	s1,0x10
+80000018:	fec48493          	addi	s1,s1,-20 # 80010000 <shared_data>
+8000001c:	00841293          	slli	t0,s0,0x8
+80000020:	005484b3          	add	s1,s1,t0
+80000024:	00001337          	lui	t1,0x1
+80000028:	29730313          	addi	t1,t1,663 # 1297 <_start-0x7fffed69>
+8000002c:	00000293          	addi	t0,zero,0
+80000030:	1357a3b7          	lui	t2,0x1357a
+80000034:	bdf38393          	addi	t2,t2,-1057 # 13579bdf <_start-0x6ca86421>
+80000038:	2468be37          	lui	t3,0x2468b
+8000003c:	ce1e0e13          	addi	t3,t3,-799 # 2468ace1 <_start-0x5b97531f>
+
+80000040 <stress_loop>:
+80000040:	00738393          	addi	t2,t2,7
+80000044:	007e4e33          	xor	t3,t3,t2
+80000048:	01c38eb3          	add	t4,t2,t3
+8000004c:	027e8f33          	mul	t5,t4,t2
+80000050:	027f5933          	divu	s2,t5,t2
+80000054:	03cf79b3          	remu	s3,t5,t3
+80000058:	01e4a023          	sw	t5,0(s1)
+8000005c:	0004aa03          	lw	s4,0(s1)
+80000060:	001a0a13          	addi	s4,s4,1
+80000064:	0004aa83          	lw	s5,0(s1)
+80000068:	014a8b33          	add	s6,s5,s4
+8000006c:	027b4bb3          	div	s7,s6,t2
+80000070:	01cbcbb3          	xor	s7,s7,t3
+80000074:	00350513          	addi	a0,a0,3
+80000078:	05554513          	xori	a0,a0,85
+8000007c:	01c3f5b3          	and	a1,t2,t3
+80000080:	01c3e633          	or	a2,t2,t3
+80000084:	008596b3          	sll	a3,a1,s0
+80000088:	00865733          	srl	a4,a2,s0
+8000008c:	00128293          	addi	t0,t0,1
+80000090:	fa6298e3          	bne	t0,t1,80000040 <stress_loop>
+80000094:	d0580eb7          	lui	t4,0xd0580
+80000098:	00320f37          	lui	t5,0x320
+8000009c:	525f0f13          	addi	t5,t5,1317 # 320525 <_start-0x7fcdfadb>
+800000a0:	01eea023          	sw	t5,0(t4) # d0580000 <_end+0x5056d000>
+800000a4:	0330000f          	fence	rw,rw
+800000a8:	00041c63          	bne	s0,zero,800000c0 <secondary_done>
+800000ac:	00010e97          	auipc	t4,0x10
+800000b0:	154e8e93          	addi	t4,t4,340 # 80010200 <tohost>
+800000b4:	00100f13          	addi	t5,zero,1
+800000b8:	01eea023          	sw	t5,0(t4)
+
+800000bc <primary_done>:
+800000bc:	0000006f          	jal	zero,800000bc <primary_done>
+
+800000c0 <secondary_done>:
+800000c0:	10500073          	wfi
+800000c4:	ffdff06f          	jal	zero,800000c0 <secondary_done>

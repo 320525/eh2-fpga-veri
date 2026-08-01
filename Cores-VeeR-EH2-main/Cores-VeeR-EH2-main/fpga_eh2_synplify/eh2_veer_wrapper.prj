@@ -1,0 +1,82 @@
+# VeeR-EH2 out-of-context synthesis with commit/WAW monitor outputs only.
+# No instr_crc_hash, CRC buffers, FIFO, accumulator, or testbench logic.
+
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/include/eh2_def.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/eh2_veer_wrapper.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/eh2_mem.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/eh2_pic_ctrl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/eh2_veer.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/eh2_dma_ctrl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu/eh2_ifu_aln_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu/eh2_ifu_compress_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu/eh2_ifu_ifc_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu/eh2_ifu_bp_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/fpga_eh2_synplify/compat/ifu/eh2_ifu_ic_mem.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/fpga_eh2_synplify/compat/ifu/eh2_ifu_mem_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu/eh2_ifu_iccm_mem.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu/eh2_ifu_btb_mem.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu/eh2_ifu.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec_decode_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec_gpr_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec_ib_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec_tlu_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec_tlu_top.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec_csr.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec_trigger.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec/eh2_dec.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/exu/eh2_exu_alu_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/exu/eh2_exu_mul_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/exu/eh2_exu_div_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/exu/eh2_exu.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_clkdomain.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_addrcheck.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_lsc_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_stbuf.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/fpga_eh2_synplify/compat/lsu/eh2_lsu_bus_buffer.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/fpga_eh2_synplify/compat/lsu/eh2_lsu_bus_intf.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_ecc.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_dccm_mem.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_dccm_ctl.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_trigger.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu/eh2_lsu_amo.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dbg/eh2_dbg.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dmi/dmi_wrapper.v"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dmi/dmi_jtag_to_core_sync.v"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dmi/rvjtag_tap.v"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lib/eh2_lib.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lib/beh_lib.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lib/mem_lib.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lib/ahb_to_axi4.sv"
+add_file -verilog -vlog_std sysv "D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lib/axi4_to_ahb.sv"
+add_file -constraint "eh2_veer_wrapper.sdc"
+
+impl -add rev_1 -type fpga
+
+set_option -top_module eh2_veer_wrapper
+set_option -vlog_std sysv
+set_option -project_relative_includes 1
+set_option -include_path {D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/include;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/ifu;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dec;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/exu;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lsu;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dbg;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/dmi;D:/eh2_fpga/Cores-VeeR-EH2-main/Cores-VeeR-EH2-main/design/lib}
+
+set_option -technology Virtex-UltraScalePlus-FPGAs
+set_option -part XCVU19P
+set_option -package FSVA3824
+set_option -speed_grade -1-e
+set_option -part_companion ""
+
+set_option -disable_io_insertion 1
+set_option -frequency 50.000
+set_option -fanout_limit 10000
+set_option -maxfan 10000
+set_option -retiming 0
+set_option -resource_sharing 0
+set_option -symbolic_fsm_compiler 1
+set_option -compiler_compatible 0
+set_option -multi_file_compilation_unit 1
+set_option -write_verilog 1
+set_option -write_vhdl 0
+set_option -write_apr_constraint 1
+set_option -rw_check_on_ram 1
+set_option -enable_prepacking 1
+
+project -result_file "rev_1/eh2_veer_wrapper.edf"

@@ -1,0 +1,34 @@
+{
+  "algorithm": "CRC-64/ECMA-182 pair plus G/XOR/SUM",
+  "polynomial": "42f0e1eba9ea3693",
+  "c0_init": "0000000000000000",
+  "c1_init": "ffffffffffffffff",
+  "k0": "9e3779b97f4a7c15",
+  "k1": "d1b54a32d192ed03",
+  "input_rows": 12,
+  "hashed_rows": 12,
+  "packages": [
+    {
+      "hart": 0,
+      "package": 0,
+      "count": 7,
+      "xor0": "7399915b5c85f5ec",
+      "xor1": "4d151b29f78d7ad9",
+      "sum0": "0b8679b3a0ba7b38",
+      "sum1": "d13268e496b5359f",
+      "sum2": "ea55cb376ecc9aa5",
+      "sum3": "ff05b583c547b618"
+    },
+    {
+      "hart": 1,
+      "package": 0,
+      "count": 5,
+      "xor0": "74ea2f9549b2a047",
+      "xor1": "8746fdbaf8869a05",
+      "sum0": "771ba71c7334c395",
+      "sum1": "cd5e39441ca49b65",
+      "sum2": "ce37beccb413dea5",
+      "sum3": "b74ffb9b1dc25f7d"
+    }
+  ]
+}
