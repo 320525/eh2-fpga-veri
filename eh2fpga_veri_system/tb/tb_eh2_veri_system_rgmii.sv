@@ -4,7 +4,8 @@
 module tb_eh2_veri_system_rgmii;
   import eh2_system_pkg::*;
 
-  localparam integer PROGRAM_FRAME_BYTES = 1038;
+  localparam integer PROGRAM_RX_FRAME_BYTES = 1042;
+  localparam integer LOG_FRAME_BYTES = 1038;
   localparam integer INFO_FRAME_BYTES = 60;
   localparam integer PROGRAM_IMAGE_FRAMES =
       `STRESS_PROGRAM_FRAME_COUNT;
@@ -58,10 +59,23 @@ module tb_eh2_veri_system_rgmii;
   integer tx_file;
   integer rgmii_tx_active_cycles = 0;
   integer execute_progress_cycles = 0;
+  integer preconfig_dma_diag_cycles = 0;
+  integer min_ifg_gap_count = 0;
+  integer burst_raw_mac_bytes = 0;
+  integer burst_raw_good_frames = 0;
+  integer burst_raw_bad_frames = 0;
+  integer burst_fifo_words = 0;
+  time last_rgmii_frame_edge = 0;
+  logic saw_rx_fifo_overflow = 1'b0;
+  logic saw_rx_classifier_overflow = 1'b0;
+  logic saw_rx_length_error = 1'b0;
   logic saw_preinit = 1'b0;
   logic saw_check_pass = 1'b0;
   logic saw_ready = 1'b0;
   logic saw_program_done = 1'b0;
+  logic [3:0] saw_hart_status = 4'b0;
+  integer program_start_count = 0;
+  integer receive_done_count = 0;
   logic saw_eh2_done = 1'b0;
   logic saw_exe_end = 1'b0;
   logic saw_hartstart_csr = 1'b0;
@@ -143,12 +157,16 @@ module tb_eh2_veri_system_rgmii;
         11: preconfig_program_byte = 8'hfe;
         12: preconfig_program_byte = 8'h88;
         13: preconfig_program_byte = 8'hb6;
+        14, 15, 16, 17: preconfig_program_byte = 8'h00;
         default: preconfig_program_byte = 8'hff;
       endcase
     end
   endfunction
 
-  function automatic [7:0] info_end_byte(input integer byte_index);
+  function automatic [7:0] info_end_byte(
+    input integer byte_index,
+    input integer total_frames
+  );
     begin
       case (byte_index)
         0: info_end_byte = 8'h02;
@@ -166,8 +184,10 @@ module tb_eh2_veri_system_rgmii;
         12: info_end_byte = 8'h88;
         13: info_end_byte = 8'hb5;
         14, 15, 16, 17: info_end_byte = 8'hff;
-        18: info_end_byte = 8'h03;
-        19: info_end_byte = 8'h20;
+        18: info_end_byte = total_frames[31:24];
+        19: info_end_byte = total_frames[23:16];
+        20: info_end_byte = total_frames[15:8];
+        21: info_end_byte = total_frames[7:0];
         default: info_end_byte = 8'h00;
       endcase
     end
@@ -184,45 +204,73 @@ module tb_eh2_veri_system_rgmii;
     reg [31:0] fcs;
     begin
       fcs = 32'h0000_0000;
-      @(posedge rgmii_rx_clock);
+      // The board TEMAC wrapper's IDDRE1 SAME_EDGE_PIPELINED mapping, together
+      // with the delayed receive clock used here, reconstructs the low nibble
+      // from the external falling edge and the high nibble from the rising
+      // edge. Align every burst to that verified phase; subsequent calls
+      // already return on the same phase.
+      if (last_rgmii_frame_edge == 0)
+        @(posedge rgmii_rx_clock);
       for (nibble_index = 0; nibble_index < 15;
            nibble_index = nibble_index + 1) begin
         rgmii_rxd <= 4'h5;
         rgmii_rx_ctl <= 1'b1;
-        @(rgmii_rx_clock);
+        if ((nibble_index & 1) == 0)
+          @(negedge rgmii_rx_clock);
+        else
+          @(posedge rgmii_rx_clock);
+        if (nibble_index == 0) begin
+          if (last_rgmii_frame_edge != 0) begin
+            // The valid-edge centers are 100 ns apart: after excluding the
+            // two half-nibble symbol halves, RX_CTL is low for exactly the
+            // IEEE 802.3 minimum 96 ns (24 DDR nibble slots / 12 bytes).
+            if (($time - last_rgmii_frame_edge) != 100ns)
+              $fatal(1, "RGMII valid-edge spacing is %0t, expected 100 ns",
+                     $time - last_rgmii_frame_edge);
+            min_ifg_gap_count = min_ifg_gap_count + 1;
+          end
+        end
       end
       rgmii_rxd <= 4'hd;
       rgmii_rx_ctl <= 1'b1;
-      @(rgmii_rx_clock);
+      @(posedge rgmii_rx_clock);
 
       for (byte_index = 0; byte_index < frame_bytes;
            byte_index = byte_index + 1) begin
         case (frame_kind)
           0: data_byte = preconfig_program_byte(byte_index);
           1: data_byte = program_byte(
-               program_frame_index * PROGRAM_FRAME_BYTES + byte_index
+               program_frame_index * PROGRAM_RX_FRAME_BYTES + byte_index
              );
-          default: data_byte = info_end_byte(byte_index);
+           default: data_byte = info_end_byte(byte_index,
+                                                program_frame_index);
         endcase
         rgmii_rxd <= data_byte[3:0];
         rgmii_rx_ctl <= 1'b1;
-        @(rgmii_rx_clock);
+        @(negedge rgmii_rx_clock);
         rgmii_rxd <= data_byte[7:4];
         rgmii_rx_ctl <= 1'b1;
         calc_crc(data_byte, fcs);
-        @(rgmii_rx_clock);
+        @(posedge rgmii_rx_clock);
       end
       for (byte_index = 0; byte_index < 4; byte_index = byte_index + 1) begin
         rgmii_rxd <= fcs[(byte_index*8) +: 4];
         rgmii_rx_ctl <= 1'b1;
-        @(rgmii_rx_clock);
+        @(negedge rgmii_rx_clock);
         rgmii_rxd <= fcs[(byte_index*8+4) +: 4];
         rgmii_rx_ctl <= 1'b1;
-        @(rgmii_rx_clock);
+        @(posedge rgmii_rx_clock);
       end
+      last_rgmii_frame_edge = $time;
       rgmii_rxd <= 4'h0;
       rgmii_rx_ctl <= 1'b0;
-      repeat (24) @(rgmii_rx_clock);
+      // Twelve complete RGMII byte cycles make RX_CTL low for exactly 96 ns.
+      // The next call drives its low nibble after the final rising edge and
+      // that nibble is sampled on the following falling edge.
+      repeat (12) begin
+        @(negedge rgmii_rx_clock);
+        @(posedge rgmii_rx_clock);
+      end
     end
   endtask
 
@@ -251,7 +299,7 @@ module tb_eh2_veri_system_rgmii;
         frame_index = byte_offset / 1024;
         payload_offset = byte_offset % 1024;
         source_byte_index =
-            frame_index * PROGRAM_FRAME_BYTES + 14 + payload_offset;
+            frame_index * PROGRAM_RX_FRAME_BYTES + 18 + payload_offset;
         expected_byte = program_byte(source_byte_index);
         actual_byte =
             dut.mig_i.ddr0_memory_i.mem[byte_offset >> 6]
@@ -289,14 +337,36 @@ module tb_eh2_veri_system_rgmii;
               saw_ready = 1'b1;
               ready_frame_count = ready_frame_count + 1;
             end
+            MSG_PROGRAM_START: program_start_count = program_start_count + 1;
+            MSG_RECEIVE_DONE:  receive_done_count = receive_done_count + 1;
             MSG_PROGRAM_DONE: saw_program_done = 1'b1;
+            MSG_HART0_START: begin
+              if (dut.system_state != ST_EXECUTE)
+                $fatal(1, "hart0 start frame outside EXECUTE");
+              saw_hart_status[0] = 1'b1;
+            end
+            MSG_HART1_START: begin
+              if (dut.system_state != ST_EXECUTE)
+                $fatal(1, "hart1 start frame outside EXECUTE");
+              saw_hart_status[1] = 1'b1;
+            end
+            MSG_HART0_DONE: begin
+              if (dut.system_state != ST_EXECUTE)
+                $fatal(1, "hart0 done frame outside EXECUTE");
+              saw_hart_status[2] = 1'b1;
+            end
+            MSG_HART1_DONE: begin
+              if (dut.system_state != ST_EXECUTE)
+                $fatal(1, "hart1 done frame outside EXECUTE");
+              saw_hart_status[3] = 1'b1;
+            end
             MSG_EH2_DONE:     saw_eh2_done = 1'b1;
             MSG_EXE_END:      saw_exe_end = 1'b1;
             default: $fatal(1, "unexpected system information code %08h", code);
           endcase
           $display("SYSTEM_TX code=%08h state=%0d time=%0t",
                    code, dut.system_state, $time);
-        end else if (tx_byte_count + 1 == PROGRAM_FRAME_BYTES) begin
+        end else if (tx_byte_count + 1 == LOG_FRAME_BYTES) begin
           tx_log_frame_count = tx_log_frame_count + 1;
           if ({tx_bytes[0],tx_bytes[1],tx_bytes[2],tx_bytes[3],
                tx_bytes[4],tx_bytes[5]} != 48'hffff_ffff_ffff)
@@ -322,7 +392,30 @@ module tb_eh2_veri_system_rgmii;
     if (rgmii_tx_ctl)
       rgmii_tx_active_cycles <= rgmii_tx_active_cycles + 1;
 
+  always @(posedge dut.eth_i.rx_mac_aclk) begin
+    if (dut.system_state == ST_PROGRAM_WRITE &&
+        dut.eth_i.mac_fifo_i.rx_axis_mac_tvalid) begin
+      burst_raw_mac_bytes = burst_raw_mac_bytes + 1;
+      if (dut.eth_i.mac_fifo_i.rx_axis_mac_tlast) begin
+        if (dut.eth_i.mac_fifo_i.rx_axis_mac_tuser)
+          burst_raw_bad_frames = burst_raw_bad_frames + 1;
+        else
+          burst_raw_good_frames = burst_raw_good_frames + 1;
+      end
+    end
+  end
+
   always @(posedge ctrl_clk) begin
+    if ((dut.system_state == ST_PROGRAM_WRITE) && dut.mac_rx_valid &&
+        dut.mac_rx_ready)
+      burst_fifo_words = burst_fifo_words + 1;
+    if (dut.rx_fifo_overflow)
+      saw_rx_fifo_overflow <= 1'b1;
+    if (dut.rx_frame_buffer_overflow)
+      saw_rx_classifier_overflow <= 1'b1;
+    if (dut.rx_frame_length_error)
+      saw_rx_length_error <= 1'b1;
+
     if (dut.program_frame_accepted)
       $display("PROGRAM_RX_ACCEPT state=%0d time=%0t",
                dut.system_state, $time);
@@ -342,11 +435,18 @@ module tb_eh2_veri_system_rgmii;
         if (dut.program_frame_count != 32'd1)
           $fatal(1, "PRECONFIG end target is %0d frames, expected 1",
                  dut.program_frame_count);
+        if (dut.system_program_end_total_count != 32'd1)
+          $fatal(1, "PRECONFIG end declared %0d frames, expected 1",
+                 dut.system_program_end_total_count);
         saw_preconfig_end_marker = 1'b1;
       end else if (dut.system_state == ST_PROGRAM_WRITE) begin
         if (dut.program_frame_count != PROGRAM_IMAGE_FRAMES)
           $fatal(1, "PROGRAM_WRITE end target is %0d frames, expected %0d",
                  dut.program_frame_count, PROGRAM_IMAGE_FRAMES);
+        if (dut.system_program_end_total_count != PROGRAM_IMAGE_FRAMES)
+          $fatal(1, "PROGRAM_WRITE end declared %0d frames, expected %0d",
+                 dut.system_program_end_total_count,
+                 PROGRAM_IMAGE_FRAMES);
         saw_program_end_marker = 1'b1;
       end else begin
         $fatal(1, "program end marker in unexpected state %0d",
@@ -361,13 +461,50 @@ module tb_eh2_veri_system_rgmii;
              "PRECONFIG checker started before frame/DMA pairing %0d/%0d busy=%b",
              dut.program_frame_count, dut.program_dma_done_count,
              dut.program_dma_busy);
+
+    if (saw_preconfig_end_marker && !dut.program_dma_done &&
+        (dut.system_state == ST_PRECONFIG)) begin
+      preconfig_dma_diag_cycles <= preconfig_dma_diag_cycles + 1;
+      if ((preconfig_dma_diag_cycles < 500) &&
+          ((preconfig_dma_diag_cycles % 50) == 0))
+        $display(
+          "PRECONFIG_DMA_DIAG n=%0d t=%0t ctrl_state=%0d busy=%b frame=%0d done=%0d fc_state=%0d cmd=%b/%b payload=%b/%b/%b sts=%b/%b axi32_aw=%b/%b w=%b/%b/%b b=%b/%b ui_aw=%b/%b ui_w=%b/%b/%b ui_b=%b/%b ddr_aw=%b/%b ddr_w=%b/%b/%b ddr_b=%b/%b",
+          preconfig_dma_diag_cycles, $time,
+          dut.controller_i.phase, dut.program_dma_busy,
+          dut.program_frame_count, dut.program_dma_done_count,
+          dut.program_dma_i.frame_ctrl_i.state,
+          dut.program_dma_i.cmd_tvalid, dut.program_dma_i.cmd_tready,
+          dut.program_dma_i.payload_tvalid,
+          dut.program_dma_i.payload_tready,
+          dut.program_dma_i.payload_tlast,
+          dut.program_dma_i.sts_tvalid, dut.program_dma_i.sts_tready,
+          dut.program_axi32.awvalid, dut.program_axi32.awready,
+          dut.program_axi32.wvalid, dut.program_axi32.wready,
+          dut.program_axi32.wlast,
+          dut.program_axi32.bvalid, dut.program_axi32.bready,
+          dut.program_ui_axi.awvalid, dut.program_ui_axi.awready,
+          dut.program_ui_axi.wvalid, dut.program_ui_axi.wready,
+          dut.program_ui_axi.wlast,
+          dut.program_ui_axi.bvalid, dut.program_ui_axi.bready,
+          dut.ddr0_axi.awvalid, dut.ddr0_axi.awready,
+          dut.ddr0_axi.wvalid, dut.ddr0_axi.wready,
+          dut.ddr0_axi.wlast,
+          dut.ddr0_axi.bvalid, dut.ddr0_axi.bready
+        );
+    end
   end
 
   always @(posedge ctrl_clk) begin : check_state_sequence
-    if (!dut.hard_resetn) begin
+    if (!(sw3_1 && sw4_1)) begin
       state_trace_started <= 1'b0;
       previous_state <= ST_PRECONFIG;
       state_visit <= 6'b0;
+    end else if (!dut.hard_resetn) begin
+      // A completed/error session intentionally performs a full internal hard
+      // reset. Preserve cumulative coverage, but restart transition tracking
+      // so END -> reset -> PRECONFIG is not mistaken for a direct FSM edge.
+      state_trace_started <= 1'b0;
+      previous_state <= ST_PRECONFIG;
     end else begin
       state_visit[dut.system_state] <= 1'b1;
       if (!state_trace_started) begin
@@ -396,8 +533,7 @@ module tb_eh2_veri_system_rgmii;
             if (dut.system_state != ST_END)
               $fatal(1, "state sequence EXECUTE -> %0d", dut.system_state);
           ST_END:
-            if (dut.system_state != ST_READY)
-              $fatal(1, "state sequence END -> %0d", dut.system_state);
+            $fatal(1, "END changed state without the required hard reset");
           default:
             $fatal(1, "unexpected previous state %0d", previous_state);
         endcase
@@ -477,34 +613,65 @@ module tb_eh2_veri_system_rgmii;
         if (dut.system_state != ST_PRECONFIG)
           $fatal(1, "PREINIT frame sent outside PRECONFIG");
 
-        send_rgmii_frame(PROGRAM_FRAME_BYTES, 0, 0);
+        send_rgmii_frame(PROGRAM_RX_FRAME_BYTES, 0, 0);
         // The host sends the system end marker immediately after the final
         // program frame. It does not wait for the FPGA-side DataMover status.
         // The controller must latch both events and join them internally.
-        send_rgmii_frame(INFO_FRAME_BYTES, 2, 0);
+        send_rgmii_frame(INFO_FRAME_BYTES, 2, 1);
 
         wait (saw_check_pass);
         wait (saw_ready);
         wait (dut.system_state == ST_PROGRAM_WRITE);
 
+        // Start a new continuous line-rate burst. The PRECONFIG/end pair was
+        // already checked separately; state processing intentionally creates
+        // a long idle interval before this formal program-write burst.
+        last_rgmii_frame_edge = 0;
+        $display("LINE_RATE_BURST_START frames=%0d ifg_ns=96 time=%0t",
+                 PROGRAM_IMAGE_FRAMES, $time);
+        $fflush();
         for (integer program_frame_index = 0;
              program_frame_index < PROGRAM_IMAGE_FRAMES;
-             program_frame_index = program_frame_index + 1)
-          send_rgmii_frame(PROGRAM_FRAME_BYTES, 1,
+             program_frame_index = program_frame_index + 1) begin
+          send_rgmii_frame(PROGRAM_RX_FRAME_BYTES, 1,
                            program_frame_index);
+          if (program_frame_index == 0) begin
+            $display(
+              "LINE_RATE_FIRST_FRAME raw_bytes=%0d good=%0d bad=%0d fifo_words=%0d fifo_status=%h classifier=%0d dropped=%0d dma_ready=%b dma_state=%0d reset=%b client_reset=%b wr_state=%0d rd_frames=%0d time=%0t",
+              burst_raw_mac_bytes, burst_raw_good_frames,
+              burst_raw_bad_frames, burst_fifo_words, dut.rx_fifo_status,
+              dut.rx_classifier_i.state, dut.dropped_frame_count,
+              dut.program_dma_input_ready,
+              dut.program_dma_i.frame_ctrl_i.state, dut.hard_resetn,
+              dut.eth_i.rx_client_resetn,
+              dut.eth_i.mac_fifo_i.rx_client_fifo_i.wr_state,
+              dut.eth_i.mac_fifo_i.rx_client_fifo_i.rd_frames, $time);
+            $fflush();
+          end
+          if (((program_frame_index + 1) % 64) == 0) begin
+            $display(
+              "LINE_RATE_BURST_PROGRESS sent=%0d raw_bytes=%0d good=%0d bad=%0d fifo_words=%0d accepted=%0d dma_done=%0d overflow=%b/%b time=%0t",
+              program_frame_index + 1, burst_raw_mac_bytes,
+              burst_raw_good_frames,
+              burst_raw_bad_frames, burst_fifo_words,
+              dut.program_frame_count, dut.program_dma_done_count,
+              dut.rx_fifo_overflow,
+              dut.rx_frame_buffer_overflow, $time);
+            $fflush();
+          end
+        end
         // Same host behavior for the real image: no DMA-done knowledge or
         // delay exists on the PC side between these two Ethernet frames.
-        send_rgmii_frame(INFO_FRAME_BYTES, 2, 0);
+        send_rgmii_frame(INFO_FRAME_BYTES, 2, PROGRAM_IMAGE_FRAMES);
 
         wait (saw_program_done);
         verify_program_ddr_image();
         wait (dut.system_state == ST_EXECUTE);
         wait (saw_exe_end);
-        wait (dut.system_state == ST_READY);
-        // END returning to READY is not the end of READY processing.  The
-        // controller must clear data DDR again and transmit a second READY
-        // frame before the full state-machine loop is considered verified.
-        wait (ready_frame_count == 2);
+        wait (!dut.hard_resetn);
+        wait (dut.hard_resetn);
+        if (dut.system_state != ST_PRECONFIG)
+          $fatal(1, "global reset did not restart at PRECONFIG");
       end
       begin : watchdog
         repeat (40_000_000) @(posedge core_clk);
@@ -523,13 +690,18 @@ module tb_eh2_veri_system_rgmii;
     if (dut.mig_i.protocol_error0 || dut.mig_i.protocol_error1)
       $fatal(1, "AXI memory-model protocol error");
     if (!(saw_preinit && saw_check_pass && saw_ready &&
-          saw_program_done && saw_eh2_done && saw_exe_end))
+          saw_program_done && (&saw_hart_status) &&
+          saw_eh2_done && saw_exe_end))
       $fatal(1, "missing system-information frame");
-    if (ready_frame_count != 2)
-      $fatal(1, "expected two READY frames, got %0d", ready_frame_count);
-    if (tx_info_frame_count != 7)
-      $fatal(1, "expected seven system-information frames, got %0d",
+    if (ready_frame_count != 1)
+      $fatal(1, "expected one READY frame before global reset, got %0d",
+             ready_frame_count);
+    if (tx_info_frame_count != 14)
+      $fatal(1, "expected fourteen system-information frames, got %0d",
              tx_info_frame_count);
+    if ((program_start_count != 2) || (receive_done_count != 2))
+      $fatal(1, "start/receive-done messages %0d/%0d, expected 2/2",
+             program_start_count, receive_done_count);
     if (tx_log_frame_count != 4)
       $fatal(1, "expected four hash frames, got %0d", tx_log_frame_count);
     if (rgmii_tx_active_cycles == 0)
@@ -541,15 +713,23 @@ module tb_eh2_veri_system_rgmii;
     if (!saw_preconfig_end_marker || !saw_program_end_marker)
       $fatal(1, "required end markers were not received pre=%b program=%b",
              saw_preconfig_end_marker, saw_program_end_marker);
+    if (saw_rx_fifo_overflow || saw_rx_classifier_overflow ||
+        saw_rx_length_error || (dut.rx_fcs_error_count != 0))
+      $fatal(1, "line-rate RX error fifo=%b classifier=%b length=%b",
+             saw_rx_fifo_overflow, saw_rx_classifier_overflow,
+             saw_rx_length_error);
+    if (min_ifg_gap_count != (PROGRAM_IMAGE_FRAMES + 1))
+      $fatal(1, "minimum-IFG gap count %0d, expected %0d",
+             min_ifg_gap_count, PROGRAM_IMAGE_FRAMES + 1);
     if (!(state_visit[ST_PRECONFIG] && state_visit[ST_READY] &&
           state_visit[ST_PROGRAM_WRITE] && state_visit[ST_EXECUTE] &&
           state_visit[ST_END]))
       $fatal(1, "not all normal states were visited: %b", state_visit);
 
     $display(
-      "FULL_SYSTEM_RGMII_PASS frames=%0d info=%0d log=%0d rgmii_cycles=%0d ddr_writes=%0d/%0d",
+      "FULL_SYSTEM_RGMII_PASS frames=%0d info=%0d log=%0d rgmii_cycles=%0d min_ifg=%0d rx_overflow=0 ddr_writes=%0d/%0d",
       tx_frame_count, tx_info_frame_count, tx_log_frame_count,
-      rgmii_tx_active_cycles,
+      rgmii_tx_active_cycles, min_ifg_gap_count,
       dut.mig_i.write_beat_count0, dut.mig_i.write_beat_count1
     );
     $finish;

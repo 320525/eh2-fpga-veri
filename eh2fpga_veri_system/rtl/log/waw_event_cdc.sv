@@ -1,26 +1,26 @@
 `timescale 1ns/1ps
 
-// One asynchronous FIFO per EH2 cancel lane preserves two simultaneous WAW
-// events while crossing from the 50 MHz core clock to the 100 MHz log store.
+// One asynchronous FIFO per cancel slot preserves the two direct-commit and
+// two pending-nonblocking WAW events while crossing from 50 to 100 MHz.
 module waw_event_cdc (
   input  logic src_clk,
   input  logic dst_clk,
   input  logic resetn,
-  input  logic [1:0]       src_valid,
-  input  logic [1:0]       src_hart,
-  input  logic [1:0][15:0] src_package,
-  input  logic [1:0][15:0] src_sequence,
+  input  logic [3:0]       src_valid,
+  input  logic [3:0]       src_hart,
+  input  logic [3:0][15:0] src_package,
+  input  logic [3:0][15:0] src_sequence,
   output logic [1:0]       src_overflow_hart,
-  output logic [1:0]       dst_valid,
-  output logic [1:0]       dst_hart,
-  output logic [1:0][15:0] dst_package,
-  output logic [1:0][15:0] dst_sequence
+  output logic [3:0]       dst_valid,
+  output logic [3:0]       dst_hart,
+  output logic [3:0][15:0] dst_package,
+  output logic [3:0][15:0] dst_sequence
 );
-  logic [1:0][32:0] fifo_din, fifo_dout;
-  logic [1:0] fifo_full, fifo_empty;
+  logic [3:0][32:0] fifo_din, fifo_dout;
+  logic [3:0] fifo_full, fifo_empty;
 
   generate
-    for (genvar lane = 0; lane < 2; lane = lane + 1) begin : g_lane
+    for (genvar lane = 0; lane < 4; lane = lane + 1) begin : g_lane
       assign fifo_din[lane] = {
         src_hart[lane],src_package[lane],src_sequence[lane]
       };
@@ -63,10 +63,9 @@ module waw_event_cdc (
     if (!resetn) begin
       src_overflow_hart <= 2'b0;
     end else begin
-      for (integer lane = 0; lane < 2; lane = lane + 1)
+      for (integer lane = 0; lane < 4; lane = lane + 1)
         if (src_valid[lane] && fifo_full[lane])
           src_overflow_hart[src_hart[lane]] <= 1'b1;
     end
   end
 endmodule
-

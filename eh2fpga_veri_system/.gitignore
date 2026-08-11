@@ -1,0 +1,18 @@
+# Project-local generated Vivado/cache directories.
+/build/debughub_manual_run/
+/build/vivado/ooc_synth_stubs/
+/build/vivado_temp_impl*/
+/output/ip_cache/
+/output/mig_phy_cache_work*/
+
+# Keep only the canonical delivered board bitstream.  The duplicate latest
+# alias, routed checkpoints, reports and caches remain local build products.
+/output/board/*
+!/output/board/eh2_veri_system.bit
+
+# Interrupted diagnostic result; the final PASS reports are tracked instead.
+/artifacts/sim/eh2_spike_partial_compare.json
+
+# Temporary waiting helpers are not part of the reproducible build flow.
+/scripts/wait_for_file.ps1
+/scripts/wait_vivado_process.ps1

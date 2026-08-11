@@ -32,7 +32,23 @@ hart_start_done:
     j       hart1_straight_line
 
 hart0_straight_line:
-    .rept 12500
+    /* 64 explicit nonblocking WAW-cancel candidate groups. The independent
+       addi after each load/div writes the same destination while the older
+       operation may still be pending, exercising EH2's real rv_nb_waw_valid
+       path. Exact cancellations are determined by the dual-hart pipeline
+       schedule; the signed-off run produces 33 events, well below the
+       483-entry per-package Ethernet limit. */
+    .rept 64
+    lw      t2, 0(s1)
+    addi    t2, t3, 1
+    div     t4, t3, t2
+    addi    t4, t3, 2
+    xor     t3, t3, t2
+    add     t5, t2, t3
+    mul     t6, t5, t2
+    add     a0, a0, t6
+    .endr
+    .rept 12436
     addi    t2, t2, 7
     xor     t3, t3, t2
     add     t4, t2, t3
@@ -45,7 +61,17 @@ hart0_straight_line:
     j       program_finish
 
 hart1_straight_line:
-    .rept 12500
+    .rept 64
+    lw      t2, 0(s1)
+    addi    t2, t3, 1
+    div     t4, t3, t2
+    addi    t4, t3, 2
+    xor     t3, t3, t2
+    add     t5, t2, t3
+    mul     t6, t5, t2
+    add     a0, a0, t6
+    .endr
+    .rept 12436
     addi    t2, t2, 7
     xor     t3, t3, t2
     add     t4, t2, t3

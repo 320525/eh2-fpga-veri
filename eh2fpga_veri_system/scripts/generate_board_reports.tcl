@@ -15,7 +15,11 @@ if {![file exists $dcp_path]} {
 }
 file mkdir $out_dir
 
-set_param general.maxThreads 8
+# The VU19P routed design is memory-heavy. Keep reporting at two threads: the
+# latest implementation reached about 23.8 GiB inside Vivado and approached
+# the host commit limit during timing/bitstream generation.  Two threads retain
+# useful parallelism without recreating the previous high-memory failure mode.
+set_param general.maxThreads 2
 open_checkpoint $dcp_path
 
 set report_failures {}

@@ -3,6 +3,7 @@
 module program_dma_subsystem (
   input  logic clk,
   input  logic resetn,
+  input  logic session_clear,
 
   input  logic [15:0] s_axis_tdata,
   input  logic        s_axis_tvalid,
@@ -14,6 +15,7 @@ module program_dma_subsystem (
   output logic        frame_done,
   output logic        dma_done,
   output logic        dma_error,
+  output logic        sequence_error,
   output logic        frame_length_error,
   output logic [31:0] last_dma_status,
   output logic        dma_busy,
@@ -33,7 +35,7 @@ module program_dma_subsystem (
   logic [3:0] awuser_unused;
 
   program_rx_dma_ctrl #(.DMA_BASE_ADDR(32'h8000_0000)) frame_ctrl_i (
-    .clk, .resetn,
+    .clk, .resetn, .session_clear,
     .rx_fifo_tdata(s_axis_tdata), .rx_fifo_tvalid(s_axis_tvalid),
     .rx_fifo_tlast(s_axis_tlast), .rx_fifo_tready(s_axis_tready),
     .payload_tdata, .payload_tvalid, .payload_tlast, .payload_tready,
@@ -44,6 +46,7 @@ module program_dma_subsystem (
     .m_axis_s2mm_sts_tvalid(sts_tvalid),
     .m_axis_s2mm_sts_tready(sts_tready),
     .frame_count, .dma_write_addr, .frame_done, .dma_done, .dma_error,
+    .sequence_error,
     .frame_length_error, .last_dma_status, .dma_busy
   );
 

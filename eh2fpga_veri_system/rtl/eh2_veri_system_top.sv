@@ -101,7 +101,14 @@ module eh2_veri_system_top #(
     else
       por_pipe <= {por_pipe[14:0],1'b1};
   end
-  wire hard_resetn = board_resetn && por_pipe[15];
+  wire base_resetn = board_resetn && por_pipe[15];
+  logic global_reset_request;
+  logic hard_resetn;
+  logic global_reset_active;
+  system_global_reset_supervisor #(.RESET_CYCLES(64)) reset_supervisor_i (
+    .clk(ctrl_clk), .base_resetn, .reset_request(global_reset_request),
+    .system_resetn(hard_resetn), .reset_active(global_reset_active)
+  );
 
   // ----------------------------------------------------------------------
   // One full-duplex Ethernet MAC and exact receive-path classification.
@@ -114,6 +121,10 @@ module eh2_veri_system_top #(
   logic phy_init_busy, phy_init_done, phy_init_success;
   logic [3:0] phy_init_error;
   logic phy_link_up, phy_autoneg_complete;
+  logic rgmii_rx_ready, rx_fcs_error_pulse;
+  (* MARK_DEBUG = "TRUE" *) logic [31:0] rx_fcs_error_count;
+  logic [31:0] tx_frame_complete_count;
+  logic [31:0] tx_submitted_frame_count;
   logic [3:0] rx_fifo_status, tx_fifo_status;
   logic rx_fifo_overflow, tx_fifo_overflow;
   logic inband_link_status, inband_duplex_status, mac_irq;
@@ -129,10 +140,23 @@ module eh2_veri_system_top #(
     .rgmii_rxd, .rgmii_rx_ctl, .rgmii_rxc, .mdio, .mdc, .phy_resetn,
     .mac_config_done, .mac_config_error, .phy_init_busy, .phy_init_done,
     .phy_init_success, .phy_init_error, .phy_link_up,
-    .phy_autoneg_complete, .rx_fifo_status, .rx_fifo_overflow,
+    .phy_autoneg_complete, .rgmii_rx_ready,
+    .rx_fcs_error_pulse, .rx_fcs_error_count,
+    .tx_frame_complete_count,
+    .rx_fifo_status, .rx_fifo_overflow,
     .tx_fifo_status, .tx_fifo_overflow, .inband_link_status,
     .inband_clock_speed, .inband_duplex_status, .mac_irq
   );
+
+  // This count is taken at the TEMAC client boundary.  Comparing it with the
+  // physical TX statistics count prevents global reset from truncating frames
+  // which have entered the MAC FIFO but have not yet left the RGMII pins.
+  always_ff @(posedge ctrl_clk or negedge hard_resetn) begin
+    if (!hard_resetn)
+      tx_submitted_frame_count <= 32'b0;
+    else if (mac_tx_valid && mac_tx_ready && mac_tx_last)
+      tx_submitted_frame_count <= tx_submitted_frame_count + 32'd1;
+  end
 
   logic [15:0] program_stream_data;
   logic program_stream_valid, program_stream_last, program_stream_ready;
@@ -160,7 +184,9 @@ module eh2_veri_system_top #(
 
   logic info_rx_rd_en, info_rx_empty, info_rx_last;
   logic [15:0] info_rx_data;
-  logic system_program_end_pulse, malformed_info_frame;
+  logic system_program_end_pulse, host_send_stopped_pulse;
+  logic malformed_info_frame;
+  logic [31:0] system_program_end_total_count;
   system_info_rx_fifo info_rx_fifo_i (
     .clk(ctrl_clk), .resetn(hard_resetn),
     .wr_en(info_wr_en), .wr_data(info_wr_data), .wr_last(info_wr_last),
@@ -173,19 +199,21 @@ module eh2_veri_system_top #(
     .fifo_data(info_rx_data), .fifo_last(info_rx_last),
     .fifo_empty(info_rx_empty), .fifo_rd_en(info_rx_rd_en),
     .program_end_pulse(system_program_end_pulse),
+    .program_end_total_count(system_program_end_total_count),
+    .host_send_stopped_pulse,
     .malformed_frame(malformed_info_frame)
   );
 
   // ----------------------------------------------------------------------
   // Program DMA, controller-owned information FIFO and TX arbitration.
   // ----------------------------------------------------------------------
-  logic ready_soft_reset;
-  wire program_resetn = hard_resetn && !ready_soft_reset;
+  logic program_session_clear;
   axi4_if #(.ADDR_WIDTH(33), .DATA_WIDTH(32), .ID_WIDTH(4)) program_axi32();
   logic [31:0] program_frame_count, program_dma_write_addr;
   logic [31:0] program_dma_done_count;
   logic program_frame_done, program_dma_done, program_dma_error;
-  logic program_frame_length_error, program_dma_busy, datamover_error;
+  logic program_frame_length_error, program_sequence_error;
+  logic program_dma_busy, datamover_error;
   logic [31:0] last_dma_status;
   logic program_first_write_pulse;
   ddr0_owner_t ddr0_owner;
@@ -194,7 +222,8 @@ module eh2_veri_system_top #(
   assign program_stream_ready = program_path_enable ?
                                 program_dma_input_ready : 1'b1;
   program_dma_subsystem program_dma_i (
-    .clk(ctrl_clk), .resetn(program_resetn),
+    .clk(ctrl_clk), .resetn(hard_resetn),
+    .session_clear(program_session_clear),
     .s_axis_tdata(program_stream_data),
     .s_axis_tvalid(program_stream_valid && program_path_enable),
     .s_axis_tlast(program_stream_last),
@@ -202,13 +231,14 @@ module eh2_veri_system_top #(
     .frame_count(program_frame_count), .dma_write_addr(program_dma_write_addr),
     .frame_done(program_frame_done), .dma_done(program_dma_done),
     .dma_error(program_dma_error),
+    .sequence_error(program_sequence_error),
     .frame_length_error(program_frame_length_error),
     .last_dma_status, .dma_busy(program_dma_busy),
     .datamover_error, .first_write_pulse(program_first_write_pulse),
     .m_axi(program_axi32)
   );
-  always_ff @(posedge ctrl_clk or negedge program_resetn) begin
-    if (!program_resetn)
+  always_ff @(posedge ctrl_clk or negedge hard_resetn) begin
+    if (!hard_resetn || program_session_clear)
       program_dma_done_count <= 32'b0;
     else if (program_dma_done && !program_dma_error && !datamover_error)
       program_dma_done_count <= program_dma_done_count + 32'd1;
@@ -284,7 +314,7 @@ module eh2_veri_system_top #(
 
   axi4_if #(.ADDR_WIDTH(33), .DATA_WIDTH(512), .ID_WIDTH(4)) program_ui_axi();
   axi32_to_512_cdc program_cdc_i (
-    .s_clk(ctrl_clk), .s_resetn(program_resetn),
+    .s_clk(ctrl_clk), .s_resetn(hard_resetn),
     .m_clk(c0_ui_clk), .m_resetn(c0_ui_resetn),
     .s_axi(program_axi32), .m_axi(program_ui_axi)
   );
@@ -318,6 +348,8 @@ module eh2_veri_system_top #(
 
   logic instr_check_start_ctrl, data_check_start_ctrl, zero_start_ctrl;
   logic instr_check_start_hold, data_check_start_hold, zero_start_hold;
+  logic [1:0] ddr0_select_ctrl, ddr0_select_ui;
+  logic [2:0] ddr1_select_ctrl, ddr1_select_ui;
   logic instr_check_done_ui, instr_check_pass_ui, instr_check_error_ui;
   logic data_check_done_ui, data_check_pass_ui, data_check_error_ui;
   logic zero_done_ui, zero_error_ui, zero_busy_ui;
@@ -327,6 +359,7 @@ module eh2_veri_system_top #(
   logic [2:0] op_start_async;
   logic zero_done_armed;
   logic zero_done_ctrl;
+  logic [5:0] op_status_ctrl;
 
   always_ff @(posedge ctrl_clk or negedge hard_resetn) begin
     if (!hard_resetn) begin
@@ -378,14 +411,16 @@ module eh2_veri_system_top #(
   axi4_if #(.ADDR_WIDTH(33), .DATA_WIDTH(512), .ID_WIDTH(4)) zero_axi();
   ddr_read_compare_master #(.BASE_ADDR(33'h0_8000_0000))
     instr_checker_i (
-      .clk(c0_ui_clk), .resetn(c0_ui_resetn), .start(instr_start_ui[0]),
+      .clk(c0_ui_clk), .resetn(c0_ui_resetn),
+      .start(instr_start_ui[0] && ddr0_select_ui[0]),
       .busy(), .done(instr_check_done_ui), .pass(instr_check_pass_ui),
       .error(instr_check_error_ui), .mismatch_count(instr_mismatch_count),
       .m_axi(instr_check_axi)
     );
   ddr_read_compare_master #(.BASE_ADDR(33'h0))
     data_checker_i (
-      .clk(c1_ui_clk), .resetn(c1_ui_resetn), .start(data_start_ui[0]),
+      .clk(c1_ui_clk), .resetn(c1_ui_resetn),
+      .start(data_start_ui[0] && ddr1_select_ui[0]),
       .busy(), .done(data_check_done_ui), .pass(data_check_pass_ui),
       .error(data_check_error_ui), .mismatch_count(data_mismatch_count),
       .m_axi(data_check_axi)
@@ -394,12 +429,12 @@ module eh2_veri_system_top #(
     .BASE_ADDR(33'h0), .LENGTH_BYTES(DATA_CLEAR_BYTES),
     .FILL_DATA(512'b0), .AXI_ID(4'h2)
   ) zero_i (
-    .clk(c1_ui_clk), .resetn(c1_ui_resetn), .start(zero_start_ui[0]),
+    .clk(c1_ui_clk), .resetn(c1_ui_resetn),
+    .start(zero_start_ui[0] && ddr1_select_ui[1]),
     .busy(zero_busy_ui), .done(zero_done_ui), .error(zero_error_ui),
     .bytes_completed(zero_bytes_completed), .m_axi(zero_axi)
   );
 
-  logic [5:0] op_status_ctrl;
   sync_bits #(.WIDTH(6)) op_status_sync_i (
     .clk(ctrl_clk), .resetn(hard_resetn),
     .async_in({zero_error_ui,zero_done_ui,
@@ -437,7 +472,7 @@ module eh2_veri_system_top #(
   axi4_if #(.ADDR_WIDTH(33), .DATA_WIDTH(512), .ID_WIDTH(4)) ifu_ui_axi();
   axi4_if #(.ADDR_WIDTH(33), .DATA_WIDTH(512), .ID_WIDTH(4)) lsu_ui_axi();
   logic eh2_core_rst_l, eh2_init_busy, eh2_init_done_core, eh2_init_error_core;
-  logic [1:0] eh2_stopped_core;
+  logic [1:0] eh2_started_core, eh2_stopped_core;
   logic [1:0][15:0] eh2_package_core;
   logic [1:0][1:0] result_valid_crc;
   logic [1:0][1:0][15:0] result_package_crc;
@@ -446,15 +481,16 @@ module eh2_veri_system_top #(
   logic [1:0][1:0][63:0] result_sum2_crc, result_sum3_crc;
   logic [1:0][1:0][31:0] result_count_crc;
   logic [1:0] nb_error_core, hash_fifo_error_core, hash_bank_error_core;
-  logic [1:0] waw_valid_core, waw_hart_core;
-  logic [1:0][15:0] waw_package_core, waw_sequence_core;
+  logic [3:0] waw_valid_core, waw_hart_core;
+  logic [3:0][15:0] waw_package_core, waw_sequence_core;
   logic ifu_axi_error_core, lsu_axi_error_core;
 
   eh2_core_crc_subsystem eh2_i (
     .clk(core_clk), .crc_rd_clk(clk125), .resetn(eh2_cycle_resetn),
     .core_rst_l(eh2_core_rst_l), .hw_init_busy(eh2_init_busy),
     .hw_init_done(eh2_init_done_core), .hw_init_error(eh2_init_error_core),
-    .stopped(eh2_stopped_core), .package_number(eh2_package_core),
+    .started(eh2_started_core), .stopped(eh2_stopped_core),
+    .package_number(eh2_package_core),
     .result_valid(result_valid_crc),
     .result_package_number(result_package_crc),
     .result_xor0(result_xor0_crc), .result_xor1(result_xor1_crc),
@@ -528,11 +564,21 @@ module eh2_veri_system_top #(
     end
   end
 
-  wire eh2_axi_idle_core =
+  wire eh2_axi_idle_core_comb =
       (ifu_wr_outstanding == 0) && (ifu_rd_outstanding == 0) &&
       (lsu_wr_outstanding == 0) && (lsu_rd_outstanding == 0) &&
       !ifu_axi64.awvalid && !ifu_axi64.wvalid && !ifu_axi64.arvalid &&
       !lsu_axi64.awvalid && !lsu_axi64.wvalid && !lsu_axi64.arvalid;
+  // Register the complete idle decision in the source domain before the
+  // single-bit synchronizer.  This prevents comparator/reduction glitches
+  // from being interpreted as a safe DDR handoff indication.
+  logic eh2_axi_idle_core;
+  always_ff @(posedge core_clk or negedge eh2_cycle_resetn) begin
+    if (!eh2_cycle_resetn)
+      eh2_axi_idle_core <= 1'b0;
+    else
+      eh2_axi_idle_core <= eh2_axi_idle_core_comb;
+  end
   logic [0:0] eh2_axi_idle_ctrl;
   sync_bits #(.WIDTH(1)) eh2_axi_idle_sync_i (
     .clk(ctrl_clk), .resetn(hard_resetn),
@@ -541,17 +587,26 @@ module eh2_veri_system_top #(
 
   // Synchronize owner selects only after each prior master is idle.  The
   // controller supplies the guard interval before releasing EH2 reset.
-  logic [1:0] ddr0_select_ctrl, ddr0_select_ui;
-  logic [2:0] ddr1_select_ctrl, ddr1_select_ui;
-  assign ddr0_select_ctrl = {
+  wire [1:0] ddr0_select_next = {
     ddr0_owner == DDR0_OWNER_EH2,
     ddr0_owner == DDR0_OWNER_CHECKER
   };
-  assign ddr1_select_ctrl = {
+  wire [2:0] ddr1_select_next = {
     ddr1_owner == DDR1_OWNER_EH2,
     ddr1_owner == DDR1_OWNER_ZERO,
     ddr1_owner == DDR1_OWNER_CHECKER
   };
+  // The enum-to-one-hot decode is registered before crossing clock domains;
+  // otherwise simultaneous state-bit changes can produce a transient owner.
+  always_ff @(posedge ctrl_clk or negedge hard_resetn) begin
+    if (!hard_resetn) begin
+      ddr0_select_ctrl <= 2'b00;
+      ddr1_select_ctrl <= 3'b000;
+    end else begin
+      ddr0_select_ctrl <= ddr0_select_next;
+      ddr1_select_ctrl <= ddr1_select_next;
+    end
+  end
   sync_bits #(.WIDTH(2)) ddr0_owner_sync_i (
     .clk(c0_ui_clk), .resetn(c0_ui_resetn),
     .async_in(ddr0_select_ctrl), .sync_out(ddr0_select_ui)
@@ -609,8 +664,9 @@ module eh2_veri_system_top #(
     .dst_count(result_count_ctrl)
   );
 
-  logic [1:0] waw_valid_ctrl, waw_hart_ctrl, waw_cdc_overflow_core;
-  logic [1:0][15:0] waw_package_ctrl, waw_sequence_ctrl;
+  logic [3:0] waw_valid_ctrl, waw_hart_ctrl;
+  logic [1:0] waw_cdc_overflow_core;
+  logic [3:0][15:0] waw_package_ctrl, waw_sequence_ctrl;
   waw_event_cdc waw_cdc_i (
     .src_clk(core_clk), .dst_clk(ctrl_clk), .resetn(eh2_cycle_resetn),
     .src_valid(waw_valid_core), .src_hart(waw_hart_core),
@@ -628,7 +684,7 @@ module eh2_veri_system_top #(
   logic [1:0] waw_store_overflow, waw_store_bank_conflict;
   waw_sequence_store waw_store_i (
     .clk(ctrl_clk), .resetn(hard_resetn),
-    .clear_all(ready_soft_reset), .event_valid(waw_valid_ctrl),
+    .clear_all(1'b0), .event_valid(waw_valid_ctrl),
     .event_hart(waw_hart_ctrl), .event_package(waw_package_ctrl),
     .event_sequence(waw_sequence_ctrl), .read_hart(waw_read_hart),
     .read_bank(waw_read_bank), .read_index(waw_read_index),
@@ -638,19 +694,18 @@ module eh2_veri_system_top #(
     .bank_conflict_hart(waw_store_bank_conflict)
   );
 
-  logic [1:0] stopped_ctrl;
+  logic [1:0] started_ctrl, stopped_ctrl;
   logic [1:0][15:0] package_ctrl;
-  sync_bits #(.WIDTH(34)) eh2_status_sync_i (
+  sync_bits #(.WIDTH(36)) eh2_status_sync_i (
     .clk(ctrl_clk), .resetn(hard_resetn),
-    .async_in({eh2_package_core,eh2_stopped_core}),
-    .sync_out({package_ctrl,stopped_ctrl})
+    .async_in({eh2_package_core,eh2_started_core,eh2_stopped_core}),
+    .sync_out({package_ctrl,started_ctrl,stopped_ctrl})
   );
   logic [7:0] log_tx_data;
   logic log_tx_valid, log_tx_last, log_tx_ready;
   logic log_frame_done, log_all_done, log_pending_overflow;
-  wire log_packetizer_resetn = hard_resetn && !ready_soft_reset;
   log_frame_packetizer log_packetizer_i (
-    .clk(ctrl_clk), .resetn(log_packetizer_resetn),
+    .clk(ctrl_clk), .resetn(hard_resetn),
     .result_valid(result_valid_ctrl),
     .result_package_number(result_package_ctrl),
     .result_xor0(result_xor0_ctrl), .result_xor1(result_xor1_ctrl),
@@ -695,11 +750,10 @@ module eh2_veri_system_top #(
                hash_bank_error_core,hash_fifo_error_core,nb_error_core}),
     .sync_out(eh2_error_status_ctrl)
   );
-  logic [1:0] eh2_init_status_ctrl;
-  sync_bits #(.WIDTH(2)) eh2_init_done_sync_i (
+  logic [0:0] eh2_init_done_ctrl;
+  sync_bits #(.WIDTH(1)) eh2_init_done_sync_i (
     .clk(ctrl_clk), .resetn(hard_resetn),
-    .async_in({eh2_init_error_core,eh2_init_done_core}),
-    .sync_out(eh2_init_status_ctrl)
+    .async_in(eh2_init_done_core), .sync_out(eh2_init_done_ctrl)
   );
   logic [0:0] result_cdc_overflow_ctrl;
   sync_bits #(.WIDTH(1)) result_error_sync_i (
@@ -714,7 +768,7 @@ module eh2_veri_system_top #(
     if (!hard_resetn) begin
       init_timeout_counter <= 29'd0;
       init_timeout <= 1'b0;
-    end else if (mac_config_done && phy_init_success &&
+    end else if (mac_config_done && phy_init_success && rgmii_rx_ready &&
                  c0_calib_done_ctrl && c1_calib_done_ctrl) begin
       init_timeout_counter <= init_timeout_counter;
     end else if (init_timeout_counter == INIT_TIMEOUT_CYCLES-1) begin
@@ -724,10 +778,10 @@ module eh2_veri_system_top #(
     end
   end
 
-  logic error_monitor_clear, fatal_error_pending;
+  logic fatal_error_pending;
   logic [31:0] fatal_error_code;
   system_error_monitor error_monitor_i (
-    .clk(ctrl_clk), .resetn(hard_resetn), .clear(error_monitor_clear),
+    .clk(ctrl_clk), .resetn(hard_resetn), .clear(1'b0),
     .err_nb_hart0(eh2_error_status_ctrl[0]),
     .err_nb_hart1(eh2_error_status_ctrl[1]),
     .err_hash_hart0(eh2_error_status_ctrl[2]),
@@ -748,11 +802,13 @@ module eh2_veri_system_top #(
     .err_rx_frame_buf(rx_frame_buffer_overflow || rx_fifo_overflow),
     .err_rx_frame_len(rx_frame_length_error || malformed_info_frame ||
                       program_frame_length_error),
+    .err_mac_rx_fcs(rx_fcs_error_pulse),
     .err_mac_config(mac_config_error ||
                     (init_timeout && !mac_config_done)),
     .err_phy_init((|phy_init_error) ||
                   (init_timeout && !phy_init_success)),
-    .err_phy_link(phy_init_done && !phy_link_up),
+    .err_phy_link((phy_init_done && !phy_link_up) ||
+                  (init_timeout && !rgmii_rx_ready)),
     .err_mig0(init_timeout && !c0_calib_done_ctrl),
     .err_mig1(init_timeout && !c1_calib_done_ctrl),
     .err_ddr_zero(op_status_ctrl[5]),
@@ -763,6 +819,7 @@ module eh2_veri_system_top #(
     .err_program_write(program_dma_error),
     .err_program_fifo(rx_fifo_overflow),
     .err_program_dma(datamover_error),
+    .err_program_sequence(program_sequence_error),
     .pending(fatal_error_pending), .code(fatal_error_code)
   );
 
@@ -770,12 +827,16 @@ module eh2_veri_system_top #(
   eh2_system_controller controller_i (
     .clk(ctrl_clk), .resetn(hard_resetn),
     .mac_config_done, .phy_init_done(phy_init_success),
-    .phy_link_up, .mig0_ready(c0_calib_done_ctrl),
+    .phy_link_up, .rgmii_rx_ready,
+    .mig0_ready(c0_calib_done_ctrl),
     .mig1_ready(c1_calib_done_ctrl),
     .preconfig_program_end_pulse(system_program_end_pulse),
     .program_first_write_pulse, .program_end_pulse(system_program_end_pulse),
+    .program_end_total_count(system_program_end_total_count),
     .program_frame_count, .program_dma_done_count,
-    .program_dma_busy, .data_atg_done(data_atg_status_ctrl[0]),
+    .program_dma_busy,
+    .host_send_stopped_pulse,
+    .data_atg_done(data_atg_status_ctrl[0]),
     .data_atg_error(data_atg_status_ctrl[1]),
     .instr_check_done(op_status_ctrl[0]),
     .instr_check_pass(instr_status_ctrl[0]),
@@ -784,16 +845,19 @@ module eh2_veri_system_top #(
     .data_check_pass(op_status_ctrl[2]),
     .data_check_error(op_status_ctrl[3]),
     .zero_done(zero_done_ctrl), .zero_error(op_status_ctrl[5]),
-    .eh2_init_done(eh2_init_status_ctrl[0]),
-    .eh2_init_error(eh2_init_status_ctrl[1]),
-    .eh2_stopped(stopped_ctrl), .eh2_axi_idle(eh2_axi_idle_ctrl[0]),
+    .eh2_init_done(eh2_init_done_ctrl[0]),
+    .eh2_init_error(eh2_error_status_ctrl[6]),
+    .eh2_started(started_ctrl), .eh2_stopped(stopped_ctrl),
+    .eh2_axi_idle(eh2_axi_idle_ctrl[0]),
     .log_tx_all_done(log_all_done),
     .fatal_error_pending, .fatal_error_code,
     .info_tx_full, .info_frame_done, .info_sent_code,
+    .tx_frame_complete_count, .tx_submitted_frame_count,
     .info_tx_push, .info_tx_code, .data_atg_start(data_atg_start_ctrl),
     .instr_check_start(instr_check_start_ctrl),
     .data_check_start(data_check_start_ctrl), .zero_start(zero_start_ctrl),
-    .ready_soft_reset, .error_monitor_clear, .eh2_execute_enable(eh2_execute_enable_ctrl),
+    .program_session_clear, .global_reset_request,
+    .eh2_execute_enable(eh2_execute_enable_ctrl),
     .prefer_log_tx, .led0, .state(system_state),
     .ddr0_owner, .ddr1_owner
   );

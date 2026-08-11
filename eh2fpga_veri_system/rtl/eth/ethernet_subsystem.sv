@@ -5,7 +5,12 @@
 // project: TEMAC System-Init ATG first, then DP83867 MDIO programming and
 // stable-link polling.  READY soft resets never reach this module.
 module ethernet_subsystem #(
-  parameter integer PHY_INIT_BYPASS = 0
+  parameter integer PHY_INIT_BYPASS = 0,
+  // Hardware waits one millisecond after the 200 MHz reference/reset release
+  // before it can declare the input-delay calibration window complete.
+  parameter integer IDELAY_GUARD_CYCLES = 100_000,
+  // Require a continuous recovered receive clock before releasing RX logic.
+  parameter integer RX_CLOCK_STABLE_EDGES = 4_096
 ) (
   input  logic       gtx_clk,
   input  logic       refclk,
@@ -40,6 +45,10 @@ module ethernet_subsystem #(
   output logic [3:0]  phy_init_error,
   output logic        phy_link_up,
   output logic        phy_autoneg_complete,
+  output logic        rgmii_rx_ready,
+  output logic        rx_fcs_error_pulse,
+  output logic [31:0] rx_fcs_error_count,
+  output logic [31:0] tx_frame_complete_count,
   output logic [3:0]  rx_fifo_status,
   output logic        rx_fifo_overflow,
   output logic [3:0]  tx_fifo_status,
@@ -200,25 +209,97 @@ module ethernet_subsystem #(
     end
   endgenerate
 
-  logic rx_mac_aclk_unused;
+  logic rx_mac_aclk;
   logic tx_mac_aclk_unused;
   logic rx_reset_unused;
   logic tx_reset_unused;
   logic rx_fifo_overflow_raw;
-  logic [27:0] rx_statistics_unused;
-  logic rx_statistics_valid_unused;
+  logic [27:0] rx_statistics_vector;
+  logic rx_statistics_valid;
   logic [31:0] tx_statistics_unused;
   logic tx_statistics_valid_unused;
-  wire client_resetn = hard_resetn && mac_config_done &&
-                       !mac_config_error && phy_init_success;
+  localparam integer EFFECTIVE_IDELAY_GUARD =
+      (PHY_INIT_BYPASS != 0) ? 16 : IDELAY_GUARD_CYCLES;
+  localparam integer EFFECTIVE_RX_STABLE_EDGES =
+      (PHY_INIT_BYPASS != 0) ? 16 : RX_CLOCK_STABLE_EDGES;
+  localparam integer IDELAY_COUNT_WIDTH =
+      (EFFECTIVE_IDELAY_GUARD <= 2) ? 1 : $clog2(EFFECTIVE_IDELAY_GUARD);
+  localparam integer RX_STABLE_COUNT_WIDTH =
+      (EFFECTIVE_RX_STABLE_EDGES <= 2) ? 1 :
+      $clog2(EFFECTIVE_RX_STABLE_EDGES);
+
+  logic [IDELAY_COUNT_WIDTH-1:0] idelay_guard_count;
+  logic idelay_guard_done;
+  logic [RX_STABLE_COUNT_WIDTH-1:0] rx_stable_count;
+  logic rx_clock_stable_rx;
+  logic [0:0] rx_clock_stable_ctrl;
+  logic [0:0] rx_stability_enable_rx;
+  logic [31:0] tx_complete_count_tx;
+  logic [31:0] tx_complete_count_gray_tx;
+  logic [31:0] tx_complete_count_gray_ctrl;
+
+  always_ff @(posedge ctrl_clk or negedge hard_resetn) begin
+    if (!hard_resetn) begin
+      idelay_guard_count <= '0;
+      idelay_guard_done  <= 1'b0;
+    end else if (!idelay_guard_done) begin
+      if (idelay_guard_count == EFFECTIVE_IDELAY_GUARD - 1) begin
+        idelay_guard_done <= 1'b1;
+      end else begin
+        idelay_guard_count <= idelay_guard_count + 1'b1;
+      end
+    end
+  end
+
+  wire rx_stability_enable_ctrl = hard_resetn && idelay_guard_done &&
+                                  mac_config_done && !mac_config_error &&
+                                  phy_init_success && phy_link_up;
+  sync_bits #(.WIDTH(1)) rx_stability_enable_sync_i (
+    .clk(rx_mac_aclk), .resetn(hard_resetn),
+    .async_in(rx_stability_enable_ctrl), .sync_out(rx_stability_enable_rx)
+  );
+
+  // rx_mac_aclk is derived directly from the RGMII RXC input by the TEMAC
+  // physical wrapper and is available while the client datapath is reset.
+  // Start the edge qualification only after PHY delay programming/readback,
+  // link detection and the conservative IDELAYCTRL calibration guard.  This
+  // prevents a pre-autonegotiation 2.5/25 MHz RXC from satisfying the test for
+  // the final 125 MHz gigabit clock.
+  always_ff @(posedge rx_mac_aclk or negedge hard_resetn) begin
+    if (!hard_resetn || !rx_stability_enable_rx[0]) begin
+      rx_stable_count   <= '0;
+      rx_clock_stable_rx <= 1'b0;
+    end else if (!rx_clock_stable_rx) begin
+      if (rx_stable_count == EFFECTIVE_RX_STABLE_EDGES - 1)
+        rx_clock_stable_rx <= 1'b1;
+      else
+        rx_stable_count <= rx_stable_count + 1'b1;
+    end
+  end
+
+  sync_bits #(.WIDTH(1)) rx_clock_stable_sync_i (
+    .clk(ctrl_clk), .resetn(hard_resetn),
+    .async_in(rx_clock_stable_rx), .sync_out(rx_clock_stable_ctrl)
+  );
+
+  always_comb begin
+    rgmii_rx_ready = hard_resetn && idelay_guard_done &&
+                     mac_config_done && !mac_config_error &&
+                     phy_init_success && phy_link_up &&
+                     rx_clock_stable_ctrl[0];
+  end
+
+  wire tx_client_resetn = hard_resetn && mac_config_done &&
+                          !mac_config_error && phy_init_success;
+  wire rx_client_resetn = rgmii_rx_ready;
 
   eth_mac_fifo_block mac_fifo_i (
-    .gtx_clk, .glbl_rstn(hard_resetn), .rx_axi_rstn(hard_resetn),
+    .gtx_clk, .glbl_rstn(hard_resetn), .rx_axi_rstn(rx_client_resetn),
     .tx_axi_rstn(hard_resetn), .refclk,
-    .rx_mac_aclk(rx_mac_aclk_unused), .rx_reset(rx_reset_unused),
-    .rx_statistics_vector(rx_statistics_unused),
-    .rx_statistics_valid(rx_statistics_valid_unused),
-    .rx_fifo_clock(ctrl_clk), .rx_fifo_resetn(client_resetn),
+    .rx_mac_aclk(rx_mac_aclk), .rx_reset(rx_reset_unused),
+    .rx_statistics_vector(rx_statistics_vector),
+    .rx_statistics_valid(rx_statistics_valid),
+    .rx_fifo_clock(ctrl_clk), .rx_fifo_resetn(rx_client_resetn),
     .rx_axis_fifo_tdata(rx_axis_tdata),
     .rx_axis_fifo_tvalid(rx_axis_tvalid),
     .rx_axis_fifo_tready(rx_axis_tready),
@@ -227,7 +308,7 @@ module ethernet_subsystem #(
     .tx_mac_aclk(tx_mac_aclk_unused), .tx_reset(tx_reset_unused),
     .tx_ifg_delay(8'h00), .tx_statistics_vector(tx_statistics_unused),
     .tx_statistics_valid(tx_statistics_valid_unused),
-    .tx_fifo_clock(ctrl_clk), .tx_fifo_resetn(client_resetn),
+    .tx_fifo_clock(ctrl_clk), .tx_fifo_resetn(tx_client_resetn),
     .tx_axis_fifo_tdata(tx_axis_tdata),
     .tx_axis_fifo_tvalid(tx_axis_tvalid),
     .tx_axis_fifo_tready(tx_axis_tready),
@@ -253,8 +334,43 @@ module ethernet_subsystem #(
   // fifo_overflow is synchronous to rx_mac_aclk and may be only one RX clock
   // wide.  A toggle CDC prevents the 100 MHz error monitor from missing it.
   event_toggle_cdc rx_fifo_overflow_cdc_i (
-    .src_clk(rx_mac_aclk_unused), .dst_clk(ctrl_clk),
+    .src_clk(rx_mac_aclk), .dst_clk(ctrl_clk),
     .resetn(hard_resetn), .src_event(rx_fifo_overflow_raw),
     .dst_pulse(rx_fifo_overflow)
   );
+
+  // PG051 defines bit 2 of a valid receive statistics vector as FCS_ERROR.
+  // The TEMAC drops that frame before the client FIFO, so retain the sideband
+  // event and diagnostic count explicitly across the RX/control clock boundary.
+  mac_rx_statistics_cdc rx_statistics_cdc_i (
+    .rx_clk(rx_mac_aclk), .ctrl_clk, .resetn(hard_resetn),
+    .statistics_vector(rx_statistics_vector),
+    .statistics_valid(rx_statistics_valid),
+    .fcs_error_pulse(rx_fcs_error_pulse),
+    .fcs_error_count(rx_fcs_error_count)
+  );
+
+  // Count frames at the MAC transmitter completion boundary, not when their
+  // final AXI byte merely enters the client FIFO.  END uses this count to keep
+  // global reset from truncating EH2_DONE or EXE_END on the RGMII pins.
+  always_ff @(posedge tx_mac_aclk_unused or negedge hard_resetn) begin
+    if (!hard_resetn)
+      tx_complete_count_tx <= 32'b0;
+    else if (tx_statistics_valid_unused)
+      tx_complete_count_tx <= tx_complete_count_tx + 32'd1;
+  end
+  assign tx_complete_count_gray_tx =
+      (tx_complete_count_tx >> 1) ^ tx_complete_count_tx;
+  sync_bits #(.WIDTH(32)) tx_complete_count_sync_i (
+    .clk(ctrl_clk), .resetn(hard_resetn),
+    .async_in(tx_complete_count_gray_tx),
+    .sync_out(tx_complete_count_gray_ctrl)
+  );
+  always_comb begin
+    tx_frame_complete_count[31] = tx_complete_count_gray_ctrl[31];
+    for (integer bit_index = 30; bit_index >= 0; bit_index = bit_index - 1)
+      tx_frame_complete_count[bit_index] =
+          tx_frame_complete_count[bit_index+1] ^
+          tx_complete_count_gray_ctrl[bit_index];
+  end
 endmodule

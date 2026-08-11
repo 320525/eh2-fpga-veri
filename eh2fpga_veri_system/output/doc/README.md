@@ -12,7 +12,7 @@
 - 对两个 hart 的提交指令分别执行 CRC-64 和归约；
 - 发送 package number、归约值和该 package 内全部 WAW 取消序号；
 - 使用独立的系统信息收发 FIFO 上报状态和错误；
-- 任一受监测的致命错误发生后发送第一条错误码、进入锁死的 `ERROR` 状态并点亮 `LED0`。
+- 任一受监测的致命错误发生后发送第一条错误码；上位机立即停止程序发送并回送停止确认，随后 FPGA 对全系统执行 64 个控制时钟的全局复位并从 `PRECONFIG` 重启。
 
 EH2 当前复位向量的字节地址为 `0x8000_0000`。程序 DataMover 的首帧也从指令 DDR 地址 `0x8000_0000` 开始写入，每个合法程序帧使目标地址增加 `0x400`。
 
@@ -33,7 +33,7 @@ EH2 当前复位向量的字节地址为 `0x8000_0000`。程序 DataMover 的首
 flowchart LR
     PC["上位机"] <-->|"RGMII / Ethernet"| MAC["TEMAC + DP83867"]
     MAC --> RX["RX 流式目的 MAC 分类"]
-    RX -->|"02:12:34:56:78:FF<br/>1038 byte"| PDMA["程序 DataMover"]
+    RX -->|"02:12:34:56:78:FF<br/>1042 byte"| PDMA["程序 DataMover"]
     RX -->|"02:32:05:25:00:FF<br/>60 byte"| IRX["系统信息 RX FIFO"]
     PDMA --> M0["指令 DDR / MIG0"]
     IRX --> CTRL["六状态控制器"]
@@ -51,7 +51,7 @@ flowchart LR
 
 RX 分类器先缓存目的 MAC 的前三个 16 bit word，判别目的地址后以单遍流式方式转发：程序帧的完整 Ethernet frame 进入程序 DataMover，系统帧只把 46-byte payload 写入系统信息 RX FIFO，其余目的地址直接排空并丢弃。分类器在 TLAST 处核对精确帧长，因此两类帧互不污染，同时不会因“整帧缓存后再整帧重放”降低 MAC RX FIFO 的持续排空速率。
 
-早期整帧缓存/重放实现曾在连续程序帧压力下触发 RX FIFO overflow。MAC FIFO 写侧是 8 bit @ 125 MHz（125 MB/s），集成系统读侧是 16 bit @ 100 MHz（200 MB/s），裸带宽本来足够；但旧分类器对 519 个 16-bit word 先采集约 5.19 µs，再在停读 MAC FIFO 时重放约 5.19 µs，单帧服务时间约 10.38 µs，而千兆以太网最小帧间隔下一帧只需约 8.50 µs。流式分类修正后只暂存 3 个 word，最终整机前仿已连续接收 782 帧而无 RX FIFO overflow。
+早期整帧缓存/重放实现曾在连续程序帧压力下触发 RX FIFO overflow。MAC FIFO 写侧是 8 bit @ 125 MHz（125 MB/s），集成系统读侧是 16 bit @ 100 MHz（200 MB/s），裸带宽本来足够；但旧分类器会先采集整帧、再在停读 MAC FIFO 时重放，使平均服务时间接近线速到达时间的两倍。流式分类修正后只暂存目的 MAC 的 3 个 word；当前 1042-byte 程序帧为 521 个 16-bit word，持续接收时分类器同时排空 RX FIFO，不再形成逐帧积压。
 
 TX 仲裁器在帧首选择来源并锁定到 `TLAST`，不会在一个以太网帧中交叉系统信息和日志数据：
 
@@ -73,20 +73,11 @@ TX 仲裁器在帧首选择来源并锁定到 `TLAST`，不会在一个以太网
 
 状态控制器与两个系统信息 FIFO 都使用 `ctrl_clk=100 MHz`。这样系统状态码、程序结束标记和 MAC 客户端 FIFO 位于同一时钟域，不需要在系统信息路径中再增加异步 FIFO。
 
-硬复位由两个板级开关与 MMCM 锁定状态共同控制。`READY` 中的软复位只复位：
+硬复位由两个板级开关、上电释放管线和独立的 `system_global_reset_supervisor` 共同控制。正常 END 的 `EXE_END` 物理发送完成后，或 ERROR 的错误帧发送完成且上位机回送 `HOST_SEND_STOPPED` 后，监督器把覆盖 TEMAC、DP83867/MDIO、双 MIG、全部 FIFO、程序 DMA、控制器、EH2、CRC/WAW 和日志路径的全局复位连续拉低 64 个 `ctrl_clk` 周期，然后从 PRECONFIG 重新初始化。
 
-- 程序接收/DataMover 会话状态和写地址；
-- 日志组包、WAW 存储和归约会话状态；
-- EH2 执行周期。
+READY 清零完成后的 `program_session_clear` 只持续一个控制时钟，用于把 PRECONFIG 留下的帧序号、包数、DMA 完成数和程序首地址恢复到正式写入初值；它不是模块软复位，不复位任何时钟域或 MAC/MIG/EH2/日志硬件。
 
-软复位不会复位：
-
-- TEMAC；
-- DP83867；
-- 系统信息 RX FIFO；
-- 系统信息 TX FIFO；
-- 系统信息组帧和发送路径；
-- 两个已完成校准的 MIG。
+PHY RX 使用确定性初始化和放行。MDIO 将 DP83867 配置为 RGMII_ID，TX 内部 delay code 为 7（约 2.00 ns），RX code 为 4（约 1.25 ns），并对两个寄存器回读核对；自动协商完成后要求链路连续稳定 100 ms。FPGA 侧保留 1100 ps RX IODELAY，XDC 对 RX 建模为 `-0.250/-1.250 ns` 输入延时。上述条件成立后，接收路径还等待 1 ms IDELAY guard，并在 `rgmii_rxc` 域观察 4096 个连续稳定边沿才释放客户端 FIFO。TEMAC 统计中的 FCS 错误通过专用 CDC 计数器送到控制域并上报 `0x66660075`，因此物理采样错误导致的坏帧不再只表现为静默丢包或程序超时。
 
 在 EH2 停止后，控制器还会等待 IFU/LSU 的所有已接受 AXI 事务返回，并要求空闲状态连续保持 16 个 `ctrl_clk` 周期，然后才允许进入 `END`、复位 EH2 或在下一轮把 DDR 所有权交给清零主机。
 
@@ -115,13 +106,13 @@ stateDiagram-v2
     [*] --> PRECONFIG
     PRECONFIG --> READY: MAC/PHY/MIG 正常且双 DDR 1024 byte 自检通过
     PRECONFIG --> ERROR: 初始化、ATG 或 DDR 比较失败
-    READY --> PROGRAM_WRITE: 数据 DDR 低 4 GiB 清零、软复位、READY 帧发送完成
+    READY --> PROGRAM_WRITE: 数据 DDR 低 4 GiB 清零、程序记账清除、READY 帧发送完成
 PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 成功完成、DMA 空闲、PROGRAM_DONE 发送完成
     PROGRAM_WRITE --> ERROR: 首次写入后 20 s 未结束或程序通路错误
     EXECUTE --> END: 两个 hart 停止、全部日志帧发送、AXI 完全排空
     EXECUTE --> ERROR: EH2、hash、FIFO、AXI 或 MAC 错误
-    END --> READY: EH2_DONE 与 EXE_END 均发送完成
-    ERROR --> ERROR: 锁死，LED0 点亮
+    END --> PRECONFIG: EH2_DONE/EXE_END 物理发送完成后全局复位
+    ERROR --> PRECONFIG: 错误帧完成且收到 HOST_SEND_STOPPED 后全局复位
 ```
 
 ### 6.1 `PRECONFIG`
@@ -130,17 +121,18 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 2. 等待下列条件全部满足：
    - 50 MHz 到 125 MHz 的 MMCM 锁定；
    - TEMAC AXI4-Lite ATG 配置完成且无响应错误；
-   - DP83867 扫描、ID 校验、RGMII delay 配置和自动协商完成；
-   - PHY 链路连续稳定；
+   - DP83867 扫描、ID 校验、RGMII delay 配置与回读、自动协商完成；
+   - PHY 链路连续稳定 100 ms，1 ms IDELAY guard 和 4096 个 RX clock 稳定边沿检查完成；
    - MIG0、MIG1 校准完成。
 3. 通过系统信息 FIFO 发送 `PREINIT_DONE = 0x11111111`。
 4. 上位机收到该帧后，按正常程序路径向指令 DDR 发送一帧 1024 byte 的 `0xFF`。该程序 DMA 的 AXI 起始地址为 `0x80000000`；前仿紧凑 DDR 模型把它折叠到内部存储数组第 0 行，但总线地址不是 `0x00000000`。
-5. 同时，50 MHz 数据 ATG 向数据 DDR 写入 1024 byte 的 `0xFF`。
-6. 收到系统结束标记、确认结束帧前一程序帧的 DMA 成功完成、程序 DMA 空闲且数据 ATG 完成后，独占两个 DDR：
+5. 首帧开始写 DDR 时发送 `PROGRAM_WRITE_START = 0x44004444`；收到结束帧时发送 `RECEIVE_DONE = 0x44114444`。PRECONFIG 与正式 PROGRAM_WRITE 使用相同的可观测信号。
+6. 同时，50 MHz 数据 ATG 向数据 DDR 写入 1024 byte 的 `0xFF`。
+7. 收到系统结束标记、确认结束帧声明总数为 1、已接收连续帧数为 1、该程序帧 DMA 成功完成、程序 DMA 空闲且数据 ATG 完成后，独占两个 DDR：
    - 指令 DDR 读取比较 1024 byte；
    - 数据 DDR 读取比较 1024 byte。
-7. 两路均正确时发送 `CHECK_PASS = 0x22222222` 并进入 `READY`。
-8. 数据或指令 DDR 失败时分别发送 `DATA_FAIL`、`INSTR_FAIL`，随后进入 `ERROR`。
+8. 两路均正确时发送 `CHECK_PASS = 0x22222222` 并进入 `READY`。
+9. 数据或指令 DDR 失败时分别发送 `DATA_FAIL`、`INSTR_FAIL`；完成错误发送/上位机停止握手后执行全局复位并回到 PRECONFIG。
 
 该状态中 DDR0 只允许程序 DataMover/指令检查器访问，DDR1 只允许数据 ATG/数据检查器访问，EH2 没有总线所有权。
 
@@ -149,10 +141,9 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 1. EH2 保持复位。
 2. DDR1 所有权只交给 `ddr_fill_master`。
 3. 使用 MIG 原有 512 bit AXI UI，以 256 beat、16 KiB 的 INCR burst 清零数据 DDR 的低 4 GiB；不修改 MIG 配置。
-4. 清零完成后执行 16 个 `ctrl_clk` 周期的软复位，恢复程序接收地址、日志系统、WAW 存储和错误锁存到新会话初值。
-5. TEMAC、PHY、MIG 和系统信息 FIFO 不复位。
-6. 发送 `READY = 0x33333333`。
-7. 该帧发送完成后进入 `PROGRAM_WRITE`。
+4. 清零完成后发出一个 `ctrl_clk` 周期的 `program_session_clear`，只恢复程序帧序号、包数、DMA 完成数和程序首地址，不复位其他模块。
+5. 发送 `READY = 0x33333333`。
+6. 该帧物理发送完成后进入 `PROGRAM_WRITE`。
 
 硬件参数 `DATA_CLEAR_BYTES` 默认为 `0x1_0000_0000`。完整前仿为缩短时间把该参数改成 1 MiB，但仍使用同一个 512 bit 清零主机和同一条 AXI 路径。
 
@@ -164,14 +155,15 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 4. 第一次程序 AXI 写地址握手后启动 20 s 计时器：
    - `ctrl_clk=100 MHz`；
    - 超时阈值为 `2,000,000,000` 个周期。
-5. 每个合法程序帧固定含 1024 byte payload，依次写入：
+5. 每个合法程序帧固定含 4 byte 连续序号和 1024 byte 程序数据，程序数据依次写入：
    - 第 0 帧：`0x8000_0000`；
    - 第 1 帧：`0x8000_0400`；
    - 依此递增。
 6. 上位机发送完最后一帧程序帧后立即发送系统信息结束帧；上位机不知道也不等待 FPGA 内部的 DMA done。
-7. RTL 在收到结束帧时锁存当时的程序帧累计数，并等待成功 DMA 完成累计数与其相等；这明确关联了“结束帧前一程序帧”和它自己的 DMA 完成。仅当该条件成立且 DataMover 当前空闲时，才发送 `PROGRAM_DONE = 0x44444444`。只有结束帧，或只有更早程序帧的 DMA 完成，都不能离开本状态。
-8. 信息帧发送完成后进入 `EXECUTE`。
-9. 超时发送 `PROGRAM_OVERTIME = 0x44440011`，然后进入 `ERROR`。
+7. 第一帧开始 AXI 写入时发送 `PROGRAM_WRITE_START = 0x44004444`；收到结束帧时立即发送 `RECEIVE_DONE = 0x44114444`，此时不要求最后一帧 DMA 已完成。
+8. RTL 在收到结束帧时锁存其声明总数和内部连续接收数，并等待成功 DMA 完成累计数追上该总数；这明确关联了“结束帧前一程序帧”和它自己的 DMA 完成。仅当“声明总数=连续接收数=DMA完成数”且 DataMover 空闲时，才发送 `PROGRAM_DONE = 0x44444444`。只有结束帧，或只有更早程序帧的 DMA 完成，都不能离开本状态。
+9. `PROGRAM_DONE` 整帧发送完成后进入 `EXECUTE`。
+10. 超时或序号/总数/DMA/FIFO/帧长/FCS错误发送对应错误码。上位机立即停止发送并回送 `HOST_SEND_STOPPED`，FPGA 完成握手后全局复位。
 
 ### 6.4 `EXECUTE`
 
@@ -210,17 +202,17 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 2. 依次发送：
    - `EH2_DONE = 0x55555555`；
    - `EXE_END = 0x77777777`。
-3. 两帧均完成后进入 `READY`。
-4. 新一轮 `READY` 会再次清零数据 DDR、复位程序/日志会话并发送新的 `READY`。
+3. 两帧均由物理 MAC 完成计数确认发送后，请求全局复位。
+4. 全局复位连续保持 64 个 `ctrl_clk` 周期，释放后从 `PRECONFIG` 重新完成 MAC/PHY/MIG 初始化和双 DDR 通路检查。
 
 ### 6.6 `ERROR`
 
 1. 第一条错误优先锁存，后续错误不覆盖它。
 2. 若 MAC 正在发送日志帧，先让该帧完整结束。
 3. 通过系统信息 FIFO 发送一次对应错误码。
-4. EH2 保持复位，DDR 所有者置空。
-5. 状态永久保持 `ERROR`。
-6. `LED0` 点亮。
+4. 错误帧发送期间 EH2 保持复位、DDR 所有者置空，`LED0` 点亮。
+5. 上位机收到错误码后立即终止正在进行的程序发送，并向系统 MAC 回送 `HOST_SEND_STOPPED = 0x44124445`。
+6. 错误帧物理发送完成和停止确认均成立后，FPGA 请求覆盖 MAC、PHY、MIG、FIFO 和所有业务模块的 64-cycle 全局复位；释放后回到 PRECONFIG。错误码只发送一次。
 
 ## 7. 以太网帧格式
 
@@ -228,18 +220,19 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 
 ### 7.1 程序接收帧
 
-总长度固定为 `14 + 1024 = 1038 byte`。
+总长度固定为 `14 + 1028 = 1042 byte`。
 
 | 偏移 | 长度 | 内容 |
 | ---: | ---: | --- |
 | 0 | 6 | 目的 MAC：`02:12:34:56:78:FF` |
 | 6 | 6 | 上位机源 MAC；测试程序使用 `02:32:05:25:00:FE` |
 | 12 | 2 | 建议 EtherType：`0x88B6` |
-| 14 | 1024 | 程序 payload |
+| 14 | 4 | `frame_sequence`，32 bit 大端序，首帧为 0，之后严格加 1 |
+| 18 | 1024 | 程序数据；只有这 1024 byte 写入 DDR |
 
-程序 payload 不足 1024 byte 时由上位机补零；不能发送短帧。RX 分类器要求帧长精确为 1038 byte，程序控制器还会检查目的 MAC、payload 恰好为 512 个 16 bit word，并等待 DataMover 状态。
+最后一帧程序数据不足 1024 byte 时由上位机在数据区尾部补零；不能发送短帧。RX 分类器要求帧长精确为 1042 byte，程序控制器剥离 4-byte 序号，检查序号从 0 连续递增，并只把后续 512 个 16-bit word交给 DataMover。序号缺失、重复、回退或跳号均上报 `ERR_PROGRAM_SEQUENCE`。
 
-当前双 hart 压力程序包含 200,000 条实际静态指令，二进制大小为 800,640 byte；补零到 800,768 byte 后拆成 782 个连续的 1024-byte payload。完整前仿把这 782 个程序帧从测试平台顶层作为真实 RGMII 数据送入 TEMAC RX，经过 RX FIFO、流式分类器、DataMover 和 AXI 转换后写入指令 DDR，并逐字节回读核对全部 800,768 byte；不是用 `$readmemh` 直接预装指令 DDR，也不是用小程序循环制造约 20 万条动态提交。
+当前双 hart 压力程序包含 200,000 条实际静态指令，二进制大小为 800,640 byte；补零到 800,768 byte 后拆成 782 个连续程序帧。每帧的以太网 payload 是“4-byte 序号 + 1024-byte 程序数据”。完整前仿把这 782 帧从测试平台顶层作为真实 RGMII 数据送入 TEMAC RX，经过 RX FIFO、流式分类器、序号检查、DataMover 和 AXI 转换后写入指令 DDR，并逐字节回读核对全部 800,768 byte；不是用 `$readmemh` 直接预装指令 DDR，也不是用小程序循环制造约 20 万条动态提交。
 
 ### 7.2 系统信息接收帧
 
@@ -250,10 +243,11 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 | 0 | 6 | 目的 MAC：`02:32:05:25:00:FF` |
 | 6 | 6 | 上位机源 MAC |
 | 12 | 2 | 建议 EtherType：`0x88B5` |
-| 14 | 4 | 命令字段 |
-| 18 | 42 | 保留，必须填 0 |
+| 14 | 4 | 命令字段；结束帧固定为 `FF FF FF FF` |
+| 18 | 4 | 结束帧声明的程序帧总数，32 bit 大端序 |
+| 22 | 38 | 保留，必须填 0 |
 
-只保留目的 MAC 正确且总长度恰好为 60 byte 的帧。46 byte payload 被送入专用 RX FIFO；当 payload 前 4 byte 为 `FF FF FF FF` 时，产生一次程序写入结束脉冲。结束标记帧不会进入程序 DataMover。
+只保留目的 MAC 正确且总长度恰好为 60 byte 的帧。46 byte payload 被送入专用 RX FIFO；当 payload 前 4 byte 为 `FF FF FF FF` 时，产生一次程序写入结束脉冲并锁存其声明的总包数。结束标记帧不会进入程序 DataMover。内部只有在声明总数、连续接收数、成功 DMA 完成数三者一致且 DataMover idle 时才判定写入完成。
 
 ### 7.3 系统信息发送帧
 
@@ -318,10 +312,17 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 | `0x22222222` | `MSG_CHECK_PASS` | 指令 DDR 与数据 DDR 的 1024 byte `0xFF` 检查均通过 |
 | `0x22220011` | `MSG_DATA_FAIL` | 数据 DDR 自检失败，发送后进入 `ERROR` |
 | `0x22220022` | `MSG_INSTR_FAIL` | 指令 DDR 自检失败，发送后进入 `ERROR` |
-| `0x33333333` | `MSG_READY` | 数据 DDR 清零和会话软复位完成，可以发送程序 |
+| `0x33333333` | `MSG_READY` | 数据 DDR 清零和程序会话记账清除完成，可以发送程序 |
+| `0x44004444` | `MSG_PROGRAM_START` | PRECONFIG 或 PROGRAM_WRITE 的首帧程序数据已开始写 DDR |
+| `0x44114444` | `MSG_RECEIVE_DONE` | 已收到上位机结束帧；此时仍可能在等待最后一帧 DMA 完成 |
+| `0x44124445` | `MSG_HOST_SEND_STOPPED` | 上位机收到错误码后已停止发送；FPGA 可进入全局复位 |
 | `0x44444444` | `MSG_PROGRAM_DONE` | 已收到程序结束标记、结束帧前一程序帧的 DMA 已成功完成，且 DataMover 当前空闲 |
+| `0x55000000` | `MSG_HART0_START` | hart0 第一次实际提交指令；不是仅释放复位的预测信号 |
+| `0x55010000` | `MSG_HART1_START` | hart1 第一次实际提交指令；证明 `mhartstart[1]` 已生效 |
+| `0x550000FF` | `MSG_HART0_DONE` | hart0 已进入停止状态 |
+| `0x550100FF` | `MSG_HART1_DONE` | hart1 已进入停止状态 |
 | `0x55555555` | `MSG_EH2_DONE` | 两个 hart 均结束，全部日志帧已发送，EH2 AXI 已排空 |
-| `0x77777777` | `MSG_EXE_END` | 本次执行会话正式结束，随后回到 `READY` |
+| `0x77777777` | `MSG_EXE_END` | 本次执行会话正式结束；物理发送完成后全局复位并回到 PRECONFIG |
 
 ### 8.2 程序写入错误
 
@@ -331,6 +332,8 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 | `0x44440022` | `ERR_PROGRAM_WRITE` | 程序帧长度、DataMover 状态或写事务错误 |
 | `0x44440033` | `ERR_PROGRAM_FIFO` | 预留的程序接收 FIFO 专用错误码；当前共用 MAC RX FIFO overflow 同时连到优先级更高的 `ERR_RX_FRAME_BUF` |
 | `0x44440044` | `ERR_PROGRAM_DMA` | AXI DataMover 报错 |
+| `0x44440055` | `ERR_PROGRAM_SEQUENCE` | 程序帧 32-bit 序号不是从 0 开始严格连续递增 |
+| `0x44440066` | `ERR_PROGRAM_COUNT` | 结束帧声明总包数与连续接收帧数不一致，或 DMA 完成计数越过目标 |
 
 ### 8.3 运行与基础设施错误
 
@@ -350,6 +353,7 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 | `0x66660072` | `ERR_INFO_TX_FIFO` | 系统信息 TX FIFO overflow |
 | `0x66660073` | `ERR_RX_FRAME_BUF` | 共用 MAC RX FIFO overflow，或分类器识别帧超过最大保护长度 |
 | `0x66660074` | `ERR_RX_FRAME_LEN` | 目的 MAC 被识别但帧长不符合协议、系统 payload 长度错误或程序 payload 长度错误 |
+| `0x66660075` | `ERR_MAC_RX_FCS` | TEMAC RX 统计发现 FCS 错误；坏帧已由 MAC 丢弃且错误不再静默 |
 | `0x66660081` | `ERR_MAC_CONFIG` | TEMAC AXI4-Lite 初始化失败 |
 | `0x66660082` | `ERR_PHY_INIT` | DP83867 扫描、ID 或 RGMII 配置失败 |
 | `0x66660083` | `ERR_PHY_LINK` | PHY 自动协商/稳定链路失败或运行时链路丢失 |
@@ -362,7 +366,7 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 | `0x666600B3` | `ERR_EH2_LSU_AXI` | EH2 LSU AXI 错误响应 |
 | `0x666600F1` | `ERR_ILLEGAL_STATE` | 控制器进入未定义 phase/state |
 
-错误监测器采用 first-error-wins。上表中的先后顺序也是同一周期多个错误同时出现时的优先级。
+错误监测器采用 first-error-wins。上表中的先后顺序也是同一周期多个错误同时出现时的优先级。任一错误码只发送一次；错误帧发送期间停在 ERROR，收到上位机停止确认后执行全局复位并从 PRECONFIG 重启。
 
 本工程只实现本表列出的系统信息符号；Excel 中多出的信号未加入协议。
 
@@ -410,6 +414,21 @@ metadata = {
 5. 其他指令：event、register 和 data 均为 0。
 
 WAW 取消的原指令序号不丢弃，而是另外写入 WAW sequence store，最终随同该 package 的归约值发送。
+
+#### WAW 事件的四路产生、CDC 与存储
+
+`instr_crc_hash_dual` 在 EH2 50 MHz 提交域产生四个并行槽。槽 0/1 分别对应两个 commit lane 上 `process_valid && rv_commit_waw_victim && rd!=0` 的直接 WAW victim；此时 package 和 sequence 就是该 commit lane 当前分配的编号。槽 2/3 对应 EH2 的两路 `rv_nb_waw_valid` pending-nonblocking victim，只有相应 hart/rd 的 nonblocking 表项仍有效且未 resolved 时才产生，package/sequence 从保存该旧指令的 160-bit 结构中取回。两路 nonblocking sideband 若在同周期重复指出完全相同的 hart/rd，只保留一份，避免同一取消事件重复上报。
+
+`waw_event_cdc` 为四个槽各实例化一个 `33 bit × 16` 深度、FWFT 的 `xpm_fifo_async`：
+
+- 写时钟为 EH2 `core_clk=50 MHz`，写数据为 `{hart[0], package[15:0], sequence[15:0]}`；
+- 读时钟为日志/控制 `ctrl_clk=100 MHz`，只要某路 FIFO 非空就同时给出 `dst_valid` 和队首数据，并在该拍读走；
+- 四路 FIFO 的目的，是在同一个 50 MHz 周期最多保留四个不同 WAW 事件；它不会把每个 package 的协议容量从 483 增加为四倍；
+- 任一路在 `src_valid` 到达时已满，该事件不写入，并按事件的 hart 永久锁存 `src_overflow_hart`，随后由错误监测器上报 `ERR_WAW_HART0/1`。
+
+`waw_sequence_store` 在 100 MHz 域按 `[hart][package bit0]` 组织成四个逻辑 bank。奇偶位只用于快速选择 bank，`bank_package` 仍保存完整 16-bit package number；如果同奇偶的新 package 在旧 bank 发完并清除前到达，就置 `bank_conflict_hart`，防止把不同 package 的序号混在一起。同周期多个槽属于同一 hart、同一完整 package 时，每个槽先统计它前面有多少个同组槽，以 `旧 count + prior_same_count` 写入连续地址；count 只增加该拍同组事件总数。因此即使四个事件同拍到达，存储顺序和数量也不会丢失。
+
+每个 hart、每个完整 package 的存储上限仍为 483。目标索引达到 483，即第 484 条事件，立即锁存 overflow 并进入错误处理；协议不拆成第二个日志帧。日志组包器读取时还会比较完整 package number，按 `0..count-1` 依序发出 WAW 序号，整帧发送结束后才通过 `clear_bank` 释放该 bank。
 
 ### 9.2 Package 和序号
 
@@ -470,6 +489,15 @@ sum2 = SUM(all g2) mod 2^64
 sum3 = SUM(all g3) mod 2^64
 count = 参与归约的有效条目数
 ```
+
+crc = 初始值
+
+for i 从 159 到 0：
+    feedback = crc[63] XOR message[i]
+    crc = crc 左移 1 位，只保留64位
+
+    if feedback == 1：
+        crc = crc XOR 0x42F0E1EBA9EA3693
 
 CRC 采集在 50 MHz EH2 提交域完成，异步多写单读 FIFO 把 CRC pair 送到 125 MHz 归约域。每个 hart 有两个 package bank；日志结果和 WAW 事件再安全跨到 100 MHz 组帧域。
 
@@ -541,7 +569,7 @@ CRC 采集在 50 MHz EH2 提交域完成，异步多写单读 FIFO 把 CRC pair 
 
 | LED | 含义 |
 | ---: | --- |
-| 0 | `ERROR` 锁死指示 |
+| 0 | 正在处理 `ERROR` 并发送错误帧；收到上位机停止确认并开始全局复位后熄灭 |
 | 1 | MAC 配置完成且无错误 |
 | 2 | PHY 初始化成功 |
 | 3 | MIG0 校准完成 |
@@ -625,7 +653,7 @@ HART1_FIRST_COMMIT  lane=0 pc=80000000 insn=f1402473
 - 设置 `mhartstart=2`，由日志后处理生成与硬件语义一致的双 hart 黄金记录；
 - 硬件执行的 ELF 本身不做该替换。
 
-最终 Spike/EH2 提交记录比较条目数为 200044，精确匹配 200044，mismatch 为 0，WAW 容差使用量为 0。
+最终 Spike/EH2 提交记录比较条目数为 200044：200011 条逐字段精确匹配，33 条属于已识别的 WAW victim 数据清零差异，缺失、额外和未解释 mismatch 均为 0。这里的 33 是 ISS 结构比较器需要接受的“结果被清零”条数，不是最终导出的 WAW 事件总数；整机日志实际导出 hart0/package0 的 4 条和 hart1/package0 的 128 条，共 132 条。
 
 ### 13.2 完整 RGMII 前仿覆盖
 
@@ -640,14 +668,14 @@ HART1_FIRST_COMMIT  lane=0 pc=80000000 insn=f1402473
 - 两个 1 MiB、512 bit AXI DDR UI 行为模型；
 - 完整 EH2 RTL；
 - 双 hart CRC、归约和日志帧；
-- `END → READY` 的第二轮状态转换。
+- `END` 两帧的物理发送完成判定以及全局复位请求。
 
 MIG 的物理 DDR4 模型在前仿中被紧凑 AXI UI 内存替换，PHY MDIO 初始化因没有串行 PHY 模型而旁路；硬件工程的默认参数仍启用真实 DP83867 初始化和完整低 4 GiB 清零。
 
 最终长仿真必须同时满足：
 
 - 系统信息码顺序为  
-  `11111111 → 22222222 → 33333333 → 44444444 → 55555555 → 77777777 → 33333333`；
+  `11111111 → 44004444 → 44114444 → 22222222 → 33333333 → 44004444 → 44114444 → 44444444 → 55000000 → 55010000 → 550000FF → 550100FF → 55555555 → 77777777`；
 - 两个 hart 都提交指令；
 - hart0 确实提交 `CSR 0x7FC = 2`；
 - 共发送四个日志帧；
@@ -660,8 +688,8 @@ MIG 的物理 DDR4 模型在前仿中被紧凑 AXI UI 内存替换，PHY MDIO �
 本轮最终结果为：
 
 ```text
-FULL_SYSTEM_RGMII_PASS frames=11 info=7 log=4 rgmii_cycles=4704 ddr_writes=12528/58026
-FULL_SYSTEM_FRAME_PASS frames=11 info=7 log=4 errors=0
+FULL_SYSTEM_RGMII_PASS frames=18 info=14 log=4 rgmii_cycles=5208 min_ifg=783 rx_overflow=0
+FULL_SYSTEM_FRAME_PASS frames=18 info=14 log=4 errors=0
 ```
 
 日志中：
@@ -670,16 +698,18 @@ FULL_SYSTEM_FRAME_PASS frames=11 info=7 log=4 errors=0
 - `AXI_PROTOCOL_ERROR: 0`；
 - 标准错误输出为 0 byte；
 - `LED0` 未置位；
-- `END` 后再次完成数据 DDR 清零并发送第二个 `READY`。
+- `END` 两帧已在 RGMII TX 端完整捕获，之后提出全局复位请求；定向平台另行验证了 64-cycle 复位和返回 `PRECONFIG`。
 
 四个实际发送的日志帧与 Spike 黄金值如下：
 
 | Hart | Package | Count | WAW | xor0 | xor1 | sum0 | sum1 | sum2 | sum3 |
 | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | 65536 | 0 | `76ccccb33aaa814b` | `93fc4eadc39c0713` | `d79da9c4a8c1172b` | `71a8e130b96ce23d` | `e78ed7cd07513416` | `8065836600100d79` |
-| 1 | 0 | 65536 | 0 | `794867dc6f2e5813` | `d6fca41457959ea0` | `111d6cd4dede4589` | `f556f6ccda59d924` | `c525a2ab348fe23e` | `d42e5338c37d4d31` |
-| 0 | 1 | 34487 | 0 | `67be0dba06d069b8` | `5b3e9695c386e524` | `809873b9ea0e88de` | `e71f46f42d15c7aa` | `0b124b71370e9c7a` | `6bb71317ab29c8e0` |
-| 1 | 1 | 34485 | 0 | `ec93f7c948ad16d7` | `2606358a233531bd` | `b9c6d21d8ff3f0ff` | `3bbb835997d4fcaf` | `799dc9857deec68b` | `ba99c046d6da89b5` |
+| 0 | 0 | 65536 | 4 | `d31849f405d7893f` | `f362cffb3bd01126` | `40883202d86e0925` | `c155b99763889958` | `f97364871915ade9` | `7ec3152548d669c5` |
+| 1 | 0 | 65536 | 128 | `bb84a72d88908184` | `77ae970cea8f03ee` | `f0ba1c03f647a3d4` | `07d2e3a5867b2f14` | `fec9fec6bbd4da0b` | `f9fc10899b8299e5` |
+| 0 | 1 | 34487 | 0 | `ca29af3d5afed2de` | `dab2dbaec7cf9013` | `304dcd82a6df56f4` | `594544d87138de09` | `c90918dde2a98436` | `86df023d8dec6168` |
+| 1 | 1 | 34485 | 0 | `b2c8ba18b57bb719` | `1d356092b1daae53` | `2f710fa64e36788d` | `ee452c2062e1d3ad` | `d772ad1beae8bdf4` | `cfaf9594c587af03` |
+
+hart0/package0 的 WAW 序号为 `[18, 20, 26, 28]`。hart1/package0 共 128 条，完整列表以 `webui/golden/stress_200k_system_golden.json` 和 `artifacts/sim/full_system_frame_verify.json` 为准；package1 两个 hart 均为 0。离线校验不仅比较 count，还逐项比较全部序号和 WAW 区域之后的零填充。
 
 调试过程中曾出现过一条测试平台 AXI 协议错误。诊断打印把首个触发点定位到 `PRECONFIG` 数据 ATG 的合法 `AWSIZE=2` 窄写。旧 DDR 行为模型错误地要求 512 bit AXI UI 上所有事务必须为 `AWSIZE=6`，并且固定按 64 byte 增加地址。修正后模型：
 
@@ -723,16 +753,24 @@ build/vivado/eh2_veri_system.xpr
 D:\vivado23\Vivado\2023.2\bin\vivado.bat -mode batch -source scripts\run_synthesis.tcl
 ```
 
+综合成功后执行完整板级实现和比特流生成：
+
+```powershell
+D:\vivado23\Vivado\2023.2\bin\vivado.bat -mode batch -source scripts\run_latest_board_implementation.tcl
+```
+
+最终比特流输出到 `output/board/eh2_veri_system_latest.bit`，并同步无后缀兼容名。脚本依次完成 `opt_design`、布局、物理优化、布线、实现报告和 `write_bitstream`，并在关键阶段保存 checkpoint、检查未解析黑盒。若前台执行环境超时但已留下有效的 `latest_post_physopt.dcp`，可使用 `scripts/resume_latest_board_route_and_bitstream.tcl` 从物理优化点继续路由、签核和位流生成，无需重做综合或布局。
+
 综合和实现使用 EH2 EDIF 网表；完整行为级前仿用相同配置的 EH2 RTL 替代 EDIF，以便观察双 hart 提交信号。
 
 ## 15. 仍需用户决定的初始化/保护项目
 
-当前系统已经实现正常工作所需的板级复位、MMCM、TEMAC、DP83867、双 MIG、自检、DDR1 清零、EH2 DCCM/ICCM 和会话软复位。以下项目不是当前功能的前提，但在最终长期运行产品中可考虑增加：
+当前系统已经实现正常工作所需的板级/监督器全局复位、MMCM、TEMAC、DP83867、确定性 RX 放行、双 MIG、自检、DDR1 清零和 EH2 DCCM/ICCM 初始化。以下项目不是当前功能的前提，但在最终长期运行产品中可考虑增加：
 
 1. **外部时钟发生器初始化**：当前假设板卡已由上电配置提供 50 MHz、100 MHz、333.333 MHz 和 MIG 参考时钟。如果板上 SI5338/同类器件并非自动配置，需要增加主机或 FPGA 内部 I²C 初始化。
 2. **指令 DDR 全空间清理**：当前每次程序会话只覆盖实际收到的连续 1024 byte 块；不会清零未被新程序覆盖的旧指令区。若软件可能跳到旧区域，可增加指令 DDR image 范围清理或长度上限保护。
 3. **运行期 PHY 自动恢复**：当前链路丢失被视为致命错误并进入 `ERROR`。如需无人值守恢复，可增加重新协商、重新配置和有限次数重试。
-4. **应用层完整性与会话号**：当前依赖 Ethernet FCS、目的 MAC、精确帧长和 DataMover 状态。若需检测丢帧、重复帧或错序，可在 1024 byte 程序 payload 中增加 frame index、总长度和 image CRC。
+4. **Image CRC 与重传**：当前 1028-byte payload 已包含 32-bit 连续 frame index，结束帧也包含 32-bit 总帧数，能够发现丢帧、重复帧和错序；仍未包含整幅 image CRC、ACK 或重传机制。若要求对内容提供独立于 Ethernet FCS 的端到端校验，可在不破坏现有编号字段的前提下扩展新协议版本。
 5. **DDR ECC scrub**：如果最终 MIG 打开 ECC，可在上电后增加全空间 scrub；当前工程沿用现有 MIG 配置，不额外改变 ECC 设置。
 6. **系统信息可靠确认**：系统信息帧当前是广播且不重传。若上位机必须保证收到每一个状态，可增加 ACK/序号/超时重发，但这会改变现有协议和状态推进条件。
 

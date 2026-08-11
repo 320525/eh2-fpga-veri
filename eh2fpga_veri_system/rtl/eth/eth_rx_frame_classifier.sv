@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 module eth_rx_frame_classifier #(
-  parameter int MAX_FRAME_WORDS = 520
+  parameter int MAX_FRAME_WORDS = 522
 ) (
   input  logic        clk,
   input  logic        resetn,
@@ -27,7 +27,9 @@ module eth_rx_frame_classifier #(
   output logic        recognized_length_error,
   output logic [31:0] dropped_frame_count
 );
-  localparam int PROGRAM_FRAME_WORDS = (14 + 1024) / 2;
+  // Program frames carry a 32-bit sequence number before the unchanged
+  // 1024-byte instruction payload.
+  localparam int PROGRAM_FRAME_WORDS = (14 + 4 + 1024) / 2;
   localparam int INFO_FRAME_WORDS    = (14 + 46) / 2;
   localparam int COUNT_W = $clog2(MAX_FRAME_WORDS + 1);
 

@@ -121,6 +121,21 @@ set_property -dict [list \
 generate_target all [get_ips]
 export_ip_user_files -of_objects [get_ips] -no_script -sync -force -quiet
 
+# The board-validated TEMAC interface in rtl/eth sends TXC edge-aligned and
+# lets the DP83867 provide the configured 2.00 ns TX clock skew.  Restore that
+# implementation after IP generation, then keep its source copy as an
+# uncompiled template so there is exactly one module definition.
+set board_rgmii_if [file join $root_dir rtl eth \
+  tri_mode_ethernet_mac_0_rgmii_v2_0_if_board.v]
+set generated_rgmii_if [file join $proj_dir eh2_veri_system.gen sources_1 ip \
+  tri_mode_ethernet_mac_0 synth physical \
+  tri_mode_ethernet_mac_0_rgmii_v2_0_if.v]
+file copy -force $board_rgmii_if $generated_rgmii_if
+set board_rgmii_file_object [get_files -quiet -all $board_rgmii_if]
+if {[llength $board_rgmii_file_object]} {
+  remove_files $board_rgmii_file_object
+}
+
 set_property top eh2_veri_system_top [get_filesets sources_1]
 set_property top_auto_set 0 [get_filesets sources_1]
 update_compile_order -fileset sources_1

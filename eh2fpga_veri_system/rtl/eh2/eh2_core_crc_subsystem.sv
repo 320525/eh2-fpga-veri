@@ -11,6 +11,7 @@ module eh2_core_crc_subsystem #(
   output logic                         hw_init_busy,
   output logic                         hw_init_done,
   output logic                         hw_init_error,
+  output logic [1:0]                   started,
   output logic [1:0]                   stopped,
   output logic [1:0][15:0]            package_number,
   output logic [1:0][1:0]             result_valid,
@@ -25,10 +26,10 @@ module eh2_core_crc_subsystem #(
   output logic [1:0]                   nb_conflict_hart,
   output logic [1:0]                   hash_fifo_overflow_hart,
   output logic [1:0]                   hash_bank_conflict_hart,
-  output logic [1:0]                   waw_cancel_valid,
-  output logic [1:0]                   waw_cancel_hart,
-  output logic [1:0][15:0]            waw_cancel_package,
-  output logic [1:0][15:0]            waw_cancel_sequence,
+  output logic [3:0]                   waw_cancel_valid,
+  output logic [3:0]                   waw_cancel_hart,
+  output logic [3:0][15:0]            waw_cancel_package,
+  output logic [3:0][15:0]            waw_cancel_sequence,
   output logic                         ifu_axi_error,
   output logic                         lsu_axi_error,
   axi4_if.master ifu_axi,
@@ -94,6 +95,19 @@ module eh2_core_crc_subsystem #(
   logic [1:0][31:0] commit_count_unused, generated_count_unused;
   logic [1:0][5:0] pending_nonblock_unused;
   logic [1:0][1:0][7:0] fifo_occupancy_unused;
+
+  // A hart is considered started only after it actually retires its first
+  // instruction.  This distinguishes hart1's real MHARTSTART response from
+  // merely releasing the shared core reset.
+  always_ff @(posedge clk or negedge resetn) begin
+    if (!resetn) begin
+      started <= 2'b00;
+    end else begin
+      for (integer lane = 0; lane < 2; lane = lane + 1)
+        if (rv_commit_valid[lane])
+          started[rv_commit_hart_id[lane]] <= 1'b1;
+    end
+  end
 
   always_ff @(posedge clk or negedge resetn) begin
     if (!resetn) begin

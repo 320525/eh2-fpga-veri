@@ -11,10 +11,10 @@ module waw_sequence_store #(
   input  logic resetn,
   input  logic clear_all,
 
-  input  logic [1:0]       event_valid,
-  input  logic [1:0]       event_hart,
-  input  logic [1:0][15:0] event_package,
-  input  logic [1:0][15:0] event_sequence,
+  input  logic [3:0]       event_valid,
+  input  logic [3:0]       event_hart,
+  input  logic [3:0][15:0] event_package,
+  input  logic [3:0][15:0] event_sequence,
 
   input  logic              read_hart,
   input  logic              read_bank,
@@ -62,18 +62,26 @@ module waw_sequence_store #(
             bank_valid[h][b]   <= 1'b0;
           end
 
-      for (integer lane = 0; lane < 2; lane = lane + 1) begin
+      for (integer lane = 0; lane < 4; lane = lane + 1) begin
         if (event_valid[lane]) begin
           logic h;
           logic b;
-          logic same_prior_event;
+          logic [2:0] prior_same_count;
+          logic [2:0] total_same_count;
           logic [9:0] target_index;
           h = event_hart[lane];
           b = event_package[lane][0];
-          same_prior_event = (lane == 1) && event_valid[0] &&
-                             (event_hart[0] == h) &&
-                             (event_package[0] == event_package[1]);
-          target_index = count[h][b] + (same_prior_event ? 10'd1 : 10'd0);
+          prior_same_count = 3'd0;
+          total_same_count = 3'd0;
+          for (integer other = 0; other < 4; other = other + 1) begin
+            if (event_valid[other] && (event_hart[other] == h) &&
+                (event_package[other] == event_package[lane])) begin
+              total_same_count = total_same_count + 3'd1;
+              if (other < lane)
+                prior_same_count = prior_same_count + 3'd1;
+            end
+          end
+          target_index = count[h][b] + prior_same_count;
 
           if (bank_valid[h][b] &&
               (bank_package[h][b] != event_package[lane])) begin
@@ -86,16 +94,10 @@ module waw_sequence_store #(
               bank_valid[h][b]   <= 1'b1;
               bank_package[h][b] <= event_package[lane];
             end
-            if ((lane == 1) && same_prior_event)
-              count[h][b] <= count[h][b] + 9'd2;
-            else if (!((lane == 0) && event_valid[1] &&
-                       (event_hart[1] == h) &&
-                       (event_package[1] == event_package[0])))
-              count[h][b] <= count[h][b] + 9'd1;
+            count[h][b] <= count[h][b] + total_same_count;
           end
         end
       end
     end
   end
 endmodule
-

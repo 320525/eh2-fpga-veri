@@ -18,7 +18,8 @@ module tb_eth_rx_separation;
   logic info_fifo_rd_en;
   logic [15:0] info_fifo_data;
   logic info_fifo_last, info_fifo_empty;
-  logic program_end_pulse, malformed_frame;
+  logic program_end_pulse, host_send_stopped_pulse, malformed_frame;
+  logic [31:0] program_end_total_count;
 
   eth_rx_frame_classifier dut (
     .clk, .resetn, .s_axis_tdata(s_data), .s_axis_tvalid(s_valid),
@@ -44,12 +45,14 @@ module tb_eth_rx_separation;
   system_info_rx_decoder decoder_i (
     .clk, .resetn, .fifo_data(info_fifo_data), .fifo_last(info_fifo_last),
     .fifo_empty(info_fifo_empty), .fifo_rd_en(info_fifo_rd_en),
-    .program_end_pulse, .malformed_frame
+    .program_end_pulse, .program_end_total_count,
+    .host_send_stopped_pulse, .malformed_frame
   );
 
   integer program_words;
   integer program_last_count;
   integer end_pulse_count;
+  integer stopped_pulse_count;
   integer accepted_program_count;
   integer accepted_info_count;
   always_ff @(posedge clk) begin
@@ -57,6 +60,7 @@ module tb_eth_rx_separation;
       program_words <= 0;
       program_last_count <= 0;
       end_pulse_count <= 0;
+      stopped_pulse_count <= 0;
       accepted_program_count <= 0;
       accepted_info_count <= 0;
     end else begin
@@ -67,6 +71,8 @@ module tb_eth_rx_separation;
       end
       if (program_end_pulse)
         end_pulse_count <= end_pulse_count + 1;
+      if (host_send_stopped_pulse)
+        stopped_pulse_count <= stopped_pulse_count + 1;
       if (program_accepted)
         accepted_program_count <= accepted_program_count + 1;
       if (info_accepted)
@@ -88,6 +94,23 @@ module tb_eth_rx_separation;
     end
   endtask
 
+  task automatic send_host_stopped_frame;
+    begin
+      send_word(16'h3202, 1'b0);
+      send_word(16'h2505, 1'b0);
+      send_word(16'hff00, 1'b0);
+      send_word(16'h2211, 1'b0);
+      send_word(16'h4433, 1'b0);
+      send_word(16'h6655, 1'b0);
+      send_word(16'hb588, 1'b0);
+      // HOST_SEND_STOPPED 0x44_12_44_45 followed by 42 zero bytes.
+      send_word(16'h1244, 1'b0);
+      send_word(16'h4544, 1'b0);
+      for (integer i = 9; i < 30; i = i + 1)
+        send_word(16'h0000, i == 29);
+    end
+  endtask
+
   task automatic send_program_frame;
     begin
       send_word(16'h1202, 1'b0);
@@ -97,6 +120,9 @@ module tb_eth_rx_separation;
       send_word(16'hddcc, 1'b0);
       send_word(16'hffee, 1'b0);
       send_word(16'h0008, 1'b0);
+      // Sequence number zero, transmitted in network byte order.
+      send_word(16'h0000, 1'b0);
+      send_word(16'h0000, 1'b0);
       for (integer i = 0; i < 512; i = i + 1)
         send_word(i[15:0], i == 511);
     end
@@ -113,8 +139,10 @@ module tb_eth_rx_separation;
       send_word(16'hb588, 1'b0);
       send_word(16'hffff, 1'b0);
       send_word(16'hffff, 1'b0);
-      send_word(16'h2003, 1'b0);
-      for (integer i = 10; i < 30; i = i + 1)
+      // Declared packet count one, transmitted big-endian.
+      send_word(16'h0000, 1'b0);
+      send_word(16'h0100, 1'b0);
+      for (integer i = 11; i < 30; i = i + 1)
         send_word(16'h0000, i == 29);
     end
   endtask
@@ -140,17 +168,23 @@ module tb_eth_rx_separation;
 
     send_program_frame();
     wait (program_last_count == 1);
-    if ((program_words != 519) || (end_pulse_count != 0))
+    if ((program_words != 521) || (end_pulse_count != 0))
       $fatal(1, "program frame leaked into system path");
 
     send_system_end_frame();
     wait (end_pulse_count == 1);
-    if ((program_words != 519) || (program_last_count != 1))
+    if ((program_words != 521) || (program_last_count != 1) ||
+        (program_end_total_count != 32'd1))
       $fatal(1, "system frame leaked into program path");
+
+    send_host_stopped_frame();
+    wait (stopped_pulse_count == 1);
+    if (end_pulse_count != 1)
+      $fatal(1, "host stop acknowledgement aliased to end marker");
 
     send_unrelated_frame();
     repeat (20) @(posedge clk);
-    if ((accepted_program_count != 1) || (accepted_info_count != 1) ||
+    if ((accepted_program_count != 1) || (accepted_info_count != 2) ||
         (drop_count != 1) || (end_pulse_count != 1))
       $fatal(1, "classification counters mismatch p=%0d i=%0d d=%0d e=%0d",
              accepted_program_count, accepted_info_count, drop_count,
@@ -166,4 +200,3 @@ module tb_eth_rx_separation;
     $fatal(1, "global simulation timeout");
   end
 endmodule
-

@@ -410,9 +410,10 @@ module dp83867_phy_init #(
                       ST_DLY_WR_MMDCR);
 
         // Keep the MAC-to-PHY transmit clock delay at 2.00 ns (TX code 7).
-        // Use 1.50 ns on the PHY-to-MAC receive clock (RX code 5).  With the
-        // J22/Bank-20 receive clock route this balances FPGA setup and hold
-        // margin while remaining inside the DP83867 programmable range.
+        // Use 1.25 ns on the PHY-to-MAC receive clock (RX code 4).  The prior
+        // 1.50 ns setting left only 0.047 ns routed hold margin. Advancing the
+        // receive clock by 0.25 ns transfers that excess setup margin to hold
+        // while keeping both sides positive across implementation corners.
         ST_DLY_WR_MMDCR:
           launch_mdio(1'b1, detected_phy_addr, REG_MMDCR, 16'h001F,
                       ST_DLY_WR_ADDR);
@@ -423,7 +424,7 @@ module dp83867_phy_init #(
           launch_mdio(1'b1, detected_phy_addr, REG_MMDCR, 16'h401F,
                       ST_DLY_WR_VALUE);
         ST_DLY_WR_VALUE:
-          launch_mdio(1'b1, detected_phy_addr, REG_MMDDR, 16'h0075,
+          launch_mdio(1'b1, detected_phy_addr, REG_MMDDR, 16'h0074,
                       ST_BMCR_RD_CMD);
 
         // Preserve negotiated speed/duplex defaults, remove isolate and
@@ -475,7 +476,7 @@ module dp83867_phy_init #(
           launch_mdio(1'b0, detected_phy_addr, REG_MMDDR, 16'd0,
                       ST_VDLY_CHECK);
         ST_VDLY_CHECK: begin
-          if (last_mdio_read[7:0] == 8'h75)
+          if (last_mdio_read[7:0] == 8'h74)
             state <= ST_BMSR_FIRST_CMD;
           else begin
             init_error <= ERR_RGMIIDCTL;

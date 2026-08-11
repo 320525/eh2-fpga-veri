@@ -1,0 +1,5 @@
+{
+  "http_host": "127.0.0.1",
+  "http_port": 3205,
+  "max_program_bytes": 67108864
+}

@@ -7,16 +7,19 @@ module tb_system_controller;
   logic resetn = 1'b0;
   always #5 clk = ~clk;
 
-  logic mac_config_done, phy_init_done, phy_link_up, mig0_ready, mig1_ready;
+  logic mac_config_done, phy_init_done, phy_link_up, rgmii_rx_ready;
+  logic mig0_ready, mig1_ready;
   logic preconfig_program_end_pulse, program_first_write_pulse;
   logic program_end_pulse, program_dma_busy;
   logic [31:0] program_frame_count, program_dma_done_count;
+  logic [31:0] program_end_total_count;
+  logic host_send_stopped_pulse;
   logic data_atg_done, data_atg_error;
   logic instr_check_done, instr_check_pass, instr_check_error;
   logic data_check_done, data_check_pass, data_check_error;
   logic zero_done, zero_error;
   logic eh2_init_done, eh2_init_error;
-  logic [1:0] eh2_stopped;
+  logic [1:0] eh2_started, eh2_stopped;
   logic eh2_axi_idle;
   logic log_tx_all_done;
   logic fatal_error_pending;
@@ -30,9 +33,11 @@ module tb_system_controller;
   logic tx_valid, tx_last, tx_ready;
   logic info_frame_done;
   logic [31:0] info_sent_code;
+  logic [31:0] tx_frame_complete_count;
+  logic [31:0] tx_submitted_frame_count;
 
   logic data_atg_start, instr_check_start, data_check_start, zero_start;
-  logic ready_soft_reset, error_monitor_clear, eh2_execute_enable;
+  logic program_session_clear, global_reset_request, eh2_execute_enable;
   logic prefer_log_tx, led0;
   system_state_t state;
   ddr0_owner_t ddr0_owner;
@@ -54,24 +59,27 @@ module tb_system_controller;
 
   eh2_system_controller #(
     .PROGRAM_TIMEOUT_CYCLES(80),
-    .SOFT_RESET_CYCLES(4),
     .EXECUTE_GUARD_CYCLES(4)
   ) dut (
     .clk, .resetn,
-    .mac_config_done, .phy_init_done, .phy_link_up, .mig0_ready, .mig1_ready,
+    .mac_config_done, .phy_init_done, .phy_link_up, .rgmii_rx_ready,
+    .mig0_ready, .mig1_ready,
     .preconfig_program_end_pulse, .program_first_write_pulse,
     .program_end_pulse, .program_frame_count, .program_dma_done_count,
-    .program_dma_busy,
+    .program_end_total_count,
+    .program_dma_busy, .host_send_stopped_pulse,
     .data_atg_done, .data_atg_error,
     .instr_check_done, .instr_check_pass, .instr_check_error,
     .data_check_done, .data_check_pass, .data_check_error,
     .zero_done, .zero_error, .eh2_init_done, .eh2_init_error,
-    .eh2_stopped, .eh2_axi_idle, .log_tx_all_done,
+    .eh2_started, .eh2_stopped, .eh2_axi_idle, .log_tx_all_done,
     .fatal_error_pending, .fatal_error_code,
     .info_tx_full(info_full), .info_frame_done, .info_sent_code,
+    .tx_frame_complete_count,
+    .tx_submitted_frame_count,
     .info_tx_push(info_push), .info_tx_code(info_code),
     .data_atg_start, .instr_check_start, .data_check_start, .zero_start,
-    .ready_soft_reset, .error_monitor_clear, .eh2_execute_enable,
+    .program_session_clear, .global_reset_request, .eh2_execute_enable,
     .prefer_log_tx, .led0, .state, .ddr0_owner, .ddr1_owner
   );
 
@@ -84,6 +92,8 @@ module tb_system_controller;
     if (!resetn) begin
       frame_index <= 0;
       frame_count <= 0;
+      tx_frame_complete_count <= 32'b0;
+      tx_submitted_frame_count <= 32'b0;
     end else if (tx_valid && tx_ready) begin
       frame[frame_index] <= tx_data;
       if (tx_last) begin
@@ -105,6 +115,8 @@ module tb_system_controller;
         observed_codes[frame_count] <=
           {frame[14],frame[15],frame[16],frame[17]};
         frame_count <= frame_count + 1;
+        tx_frame_complete_count <= tx_frame_complete_count + 32'd1;
+        tx_submitted_frame_count <= tx_submitted_frame_count + 32'd1;
         frame_index <= 0;
       end else begin
         frame_index <= frame_index + 1;
@@ -145,6 +157,7 @@ module tb_system_controller;
     mac_config_done = 1'b0;
     phy_init_done = 1'b0;
     phy_link_up = 1'b0;
+    rgmii_rx_ready = 1'b0;
     mig0_ready = 1'b0;
     mig1_ready = 1'b0;
     preconfig_program_end_pulse = 1'b0;
@@ -152,7 +165,9 @@ module tb_system_controller;
     program_end_pulse = 1'b0;
     program_frame_count = 32'b0;
     program_dma_done_count = 32'b0;
+    program_end_total_count = 32'b0;
     program_dma_busy = 1'b0;
+    host_send_stopped_pulse = 1'b0;
     data_atg_done = 1'b0;
     data_atg_error = 1'b0;
     instr_check_done = 1'b0;
@@ -165,6 +180,7 @@ module tb_system_controller;
     zero_error = 1'b0;
     eh2_init_done = 1'b0;
     eh2_init_error = 1'b0;
+    eh2_started = 2'b00;
     eh2_stopped = 2'b00;
     eh2_axi_idle = 1'b1;
     log_tx_all_done = 1'b0;
@@ -177,6 +193,7 @@ module tb_system_controller;
     mac_config_done <= 1'b1;
     phy_init_done <= 1'b1;
     phy_link_up <= 1'b1;
+    rgmii_rx_ready <= 1'b1;
     mig0_ready <= 1'b1;
     mig1_ready <= 1'b1;
 
@@ -187,8 +204,14 @@ module tb_system_controller;
     repeat (3) @(posedge clk);
     data_atg_done <= 1'b1;
     program_frame_count <= 32'd1;
+    pulse(1);
+    wait (frame_count >= 2);
+    program_end_total_count <= 32'd1;
     pulse(0);
     repeat (4) @(posedge clk);
+    if ((ddr0_owner != DDR0_OWNER_PROGRAM) ||
+        (ddr1_owner != DDR1_OWNER_ATG))
+      $fatal(1, "PRECONFIG ownership changed before DMA/ATG completion");
     if (instr_check_start)
       $fatal(1, "PRECONFIG check started without preceding DMA done");
     program_dma_done_count <= 32'd1;
@@ -212,6 +235,7 @@ module tb_system_controller;
       $fatal(1, "READY zero owner mismatch");
     repeat (5) @(posedge clk);
     zero_done <= 1'b1;
+    wait (program_session_clear);
 
     wait_for_state(ST_PROGRAM_WRITE);
     zero_done <= 1'b0;
@@ -223,8 +247,10 @@ module tb_system_controller;
     program_frame_count <= 32'd3;
     program_dma_done_count <= 32'd0;
     pulse(1);
+    wait (frame_count >= 6);
     program_dma_done_count <= 32'd2;
     // The end marker alone must not produce PROGRAM_DONE.
+    program_end_total_count <= 32'd3;
     pulse(2);
     repeat (8) @(posedge clk);
     if (state != ST_PROGRAM_WRITE)
@@ -243,22 +269,32 @@ module tb_system_controller;
     while (!eh2_execute_enable) @(posedge clk);
     eh2_init_done <= 1'b1;
     repeat (5) @(posedge clk);
-    eh2_stopped <= 2'b11;
+    eh2_started[0] <= 1'b1;
+    repeat (5) @(posedge clk);
+    eh2_started[1] <= 1'b1;
+    repeat (5) @(posedge clk);
+    eh2_stopped[0] <= 1'b1;
+    repeat (5) @(posedge clk);
+    eh2_stopped[1] <= 1'b1;
     log_tx_all_done <= 1'b1;
 
     wait_for_state(ST_END);
-    wait_for_state(ST_READY);
-    zero_done <= 1'b1;
-    while (frame_count < 7) @(posedge clk);
+    wait (global_reset_request);
+    while (frame_count < 14) @(posedge clk);
     if (observed_codes[0] != MSG_PREINIT_DONE) $fatal(1, "preinit code");
-    if (observed_codes[1] != MSG_CHECK_PASS)   $fatal(1, "check pass code");
-    if (observed_codes[2] != MSG_READY)        $fatal(1, "ready code");
-    if (observed_codes[3] != MSG_PROGRAM_DONE) $fatal(1, "program code");
-    if (observed_codes[4] != MSG_EH2_DONE)     $fatal(1, "eh2 done code");
-    if (observed_codes[5] != MSG_EXE_END)      $fatal(1, "end code");
-    // Re-entering READY emits another READY after the zero/soft reset cycle.
-    if (observed_codes[6] != MSG_READY)        $fatal(1, "second ready code");
-
+    if (observed_codes[1] != MSG_PROGRAM_START)$fatal(1, "preconfig start code");
+    if (observed_codes[2] != MSG_RECEIVE_DONE) $fatal(1, "preconfig receive code");
+    if (observed_codes[3] != MSG_CHECK_PASS)   $fatal(1, "check pass code");
+    if (observed_codes[4] != MSG_READY)        $fatal(1, "ready code");
+    if (observed_codes[5] != MSG_PROGRAM_START)$fatal(1, "program start code");
+    if (observed_codes[6] != MSG_RECEIVE_DONE) $fatal(1, "program receive code");
+    if (observed_codes[7] != MSG_PROGRAM_DONE) $fatal(1, "program code");
+    if (observed_codes[8] != MSG_HART0_START)  $fatal(1, "hart0 start code");
+    if (observed_codes[9] != MSG_HART1_START)  $fatal(1, "hart1 start code");
+    if (observed_codes[10] != MSG_HART0_DONE)  $fatal(1, "hart0 done code");
+    if (observed_codes[11] != MSG_HART1_DONE)  $fatal(1, "hart1 done code");
+    if (observed_codes[12] != MSG_EH2_DONE)    $fatal(1, "eh2 done code");
+    if (observed_codes[13] != MSG_EXE_END)     $fatal(1, "end code");
     $display("TB_PASS controller frames=%0d", frame_count);
     $finish;
   end

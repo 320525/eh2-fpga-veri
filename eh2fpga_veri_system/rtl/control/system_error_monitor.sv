@@ -1,8 +1,8 @@
 `timescale 1ns/1ps
 
 // First-error-wins monitor.  Sources are already synchronized to ctrl_clk by
-// their owning subsystems.  Clear is used only for the READY soft reset; the
-// hard ERROR state never clears the captured code.
+// their owning subsystems.  Normal operation relies on the system-wide hard
+// reset between sessions; clear remains only as a directed-test hook.
 module system_error_monitor (
   input  logic clk,
   input  logic resetn,
@@ -22,6 +22,7 @@ module system_error_monitor (
   input  logic err_info_tx_fifo,
   input  logic err_rx_frame_buf,
   input  logic err_rx_frame_len,
+  input  logic err_mac_rx_fcs,
   input  logic err_mac_config,
   input  logic err_phy_init,
   input  logic err_phy_link,
@@ -35,6 +36,7 @@ module system_error_monitor (
   input  logic err_program_write,
   input  logic err_program_fifo,
   input  logic err_program_dma,
+  input  logic err_program_sequence,
 
   output logic pending,
   output logic [31:0] code
@@ -60,6 +62,7 @@ module system_error_monitor (
     else if (err_info_tx_fifo)  next_code = ERR_INFO_TX_FIFO;
     else if (err_rx_frame_buf)  next_code = ERR_RX_FRAME_BUF;
     else if (err_rx_frame_len)  next_code = ERR_RX_FRAME_LEN;
+    else if (err_mac_rx_fcs)    next_code = ERR_MAC_RX_FCS;
     else if (err_mac_config)    next_code = ERR_MAC_CONFIG;
     else if (err_phy_init)      next_code = ERR_PHY_INIT;
     else if (err_phy_link)      next_code = ERR_PHY_LINK;
@@ -70,6 +73,7 @@ module system_error_monitor (
     else if (err_eh2_init)      next_code = ERR_EH2_INIT;
     else if (err_eh2_ifu_axi)   next_code = ERR_EH2_IFU_AXI;
     else if (err_eh2_lsu_axi)   next_code = ERR_EH2_LSU_AXI;
+    else if (err_program_sequence) next_code = ERR_PROGRAM_SEQUENCE;
     else if (err_program_write) next_code = ERR_PROGRAM_WRITE;
     else if (err_program_fifo)  next_code = ERR_PROGRAM_FIFO;
     else if (err_program_dma)   next_code = ERR_PROGRAM_DMA;
@@ -89,4 +93,3 @@ module system_error_monitor (
     end
   end
 endmodule
-

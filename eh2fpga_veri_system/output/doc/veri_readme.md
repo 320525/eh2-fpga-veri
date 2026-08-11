@@ -2,9 +2,9 @@
 
 ## 1. 文档目的
 
-本文只说明本工程已经完成的前仿验证工作、验证方法、判定条件、最终结果、验证中发现的问题以及尚未覆盖的内容。系统功能、模块结构、状态机和协议定义的完整说明见工程根目录的 `README.md`。
+本文只说明本工程已经完成的前仿验证工作、验证方法、判定条件、最终结果、验证中发现的问题以及尚未覆盖的内容。系统功能、模块结构、状态机和协议定义的完整说明见同目录的 `README.md`。
 
-截至 2026-07-31，工程已经完成以下四个层级的前仿：
+截至 2026-08-06，工程已经完成以下四个层级的前仿：
 
 1. 控制器、以太网接收隔离、DDR 主机、日志封帧/WAW 容量的单元级前仿；
 2. EH2 双 hart 约 20 万条提交指令的独立长仿真；
@@ -14,8 +14,8 @@
 所有最终保留的通过日志和 JSON 报告均为 `PASS`。整机最终结果为：
 
 ```text
-FULL_SYSTEM_RGMII_PASS frames=11 info=7 log=4 rgmii_cycles=4704 ddr_writes=12528/58026
-FULL_SYSTEM_FRAME_PASS frames=11 info=7 log=4 errors=0
+FULL_SYSTEM_RGMII_PASS frames=18 info=14 log=4 rgmii_cycles=5208 min_ifg=783 rx_overflow=0
+FULL_SYSTEM_FRAME_PASS frames=18 info=14 log=4 errors=0
 ```
 
 这里的“前仿”是 Vivado XSim behavioral simulation，不等同于综合网表时序仿真或上板验证。第 12 节明确列出了替代模型和未覆盖项。
@@ -54,18 +54,19 @@ FULL_SYSTEM_FRAME_PASS frames=11 info=7 log=4 errors=0
 
 | 层级 | 测试平台/工具 | 主要验证对象 | 最终结果 |
 |---|---|---|---|
-| 状态控制器单元 | `tb_system_controller.sv` | 六状态正常路径、DDR 所有权、系统信息帧 | `TB_PASS controller frames=7` |
+| 状态控制器单元 | `tb_system_controller.sv` | 六状态正常路径、DDR 所有权、END/ERROR 全局复位请求 | `TB_PASS` |
 | RX 隔离单元 | `tb_eth_rx_separation.sv` | 程序帧/系统帧隔离、结束标志、无关帧丢弃 | `TB_PASS rx separation program_words=519 drops=1` |
 | DDR 主机单元 | `tb_ddr_masters.sv` | 1024-byte 全 FF 写入、回读比较、AXI 时序 | `TB_PASS DDR fill/check bytes=1024` |
 | 日志封帧单元 | `tb_log_frame_packetizer.sv` | 双 hart 封帧、hash 字段、WAW 序号和 483 上限 | `TB_PASS log packetizer ... WAW_limit=483` |
+| WAW 早期导出 | `tb_waw_export_early.sv` | direct-commit WAW 事件、hart/package/sequence 及前 132 项完整次序 | `TB_PASS WAW export count=132 hart0=4 hart1=128` |
 | EH2 长仿真 | `tb_eh2_stress_200k_csr.sv` | 双 hart、约 20 万条提交、非阻塞结果、四个归约包 | `EH2_STRESS_200K_CSR_PASS` |
 | Spike 对照 | Spike + Python | EH2 与 ISS 的 200044 条结构逐条比较 | `PASS`, 200044/200044 exact |
 | 整机 RGMII 前仿 | `tb_eh2_veri_system_rgmii.sv` | 顶层收帧烧写、状态机、EH2 执行、日志发送 | `FULL_SYSTEM_RGMII_PASS` |
-| TX 帧离线复核 | `verify_full_system_frames.py` | 11 帧格式、顺序、hash 黄金值和零填充 | `FULL_SYSTEM_FRAME_PASS` |
+| TX 帧离线复核 | `verify_full_system_frames.py` | 18 帧格式、状态顺序、hash/WAW 黄金值和零填充 | `FULL_SYSTEM_FRAME_PASS` |
 
 ## 4. 单元级前仿
 
-六项单元测试由 `scripts/run_unit_sims.ps1` 运行，其中 PRECONFIG 的 0 帧和 2 帧非法情况使用两个独立顶层，因为进入 ERROR 后状态按设计锁定。
+单元测试由 `scripts/run_unit_sims.ps1` 运行，其中 PRECONFIG 的 0 帧和 2 帧非法情况使用独立顶层。ERROR 测试会检查 first-error-wins、错误码、LED0、上位机停止确认和全局复位请求；错误信息帧物理发送完成且收到 `HOST_SEND_STOPPED` 后，监督器复位全系统并回到 PRECONFIG，而不是永久锁死或直接跳到 READY。
 
 ### 4.1 六状态控制器与系统信息发送
 
@@ -80,7 +81,8 @@ PRECONFIG
   -> PROGRAM_WRITE
   -> EXECUTE
   -> END
-  -> READY
+  -> GLOBAL_RESET
+  -> PRECONFIG
 ```
 
 具体检查内容：
@@ -89,12 +91,12 @@ PRECONFIG
 - 两侧 1024-byte 全 FF 写入结束后，指令 DDR 和数据 DDR 的读比较器同时启动；
 - 读比较期间两侧 DDR 所有者均切换为 CHECKER；
 - 检查通过后进入 READY，数据 DDR 所有者切换为 ZERO；
-- 清零和软复位结束后进入 PROGRAM_WRITE，程序 DDR 只归程序 DMA；
+- 清零和一周期程序会话记账清除结束后进入 PROGRAM_WRITE，程序 DDR 只归程序 DMA；
 - 只有程序结束标志、结束帧前一程序帧的 DMA 成功完成和 DMA 空闲三个条件同时成立后才进入 EXECUTE，两侧 DDR 均只归 EH2；
 - 两个 hart 执行停止、日志结果发送完毕且 AXI 空闲条件满足后进入 END；
-- END 发送完成后再次进入 READY。
+- END 两帧物理发送完成后请求 64-cycle 全局复位并再次进入 PRECONFIG。
 
-测试平台逐字节检查了 7 个系统信息帧。每帧长度必须为 60 bytes，不含 RGMII 前导码和 FCS；字段必须为：
+最终一次顶层闭环测试逐字节检查了 14 个系统信息帧。每帧长度必须为 60 bytes，不含 RGMII 前导码和 FCS；字段必须为：
 
 - 目的 MAC：`ff:ff:ff:ff:ff:ff`；
 - 源 MAC：`02:32:05:25:00:ff`；
@@ -107,28 +109,35 @@ PRECONFIG
 
 ```text
 11111111  PREINIT_DONE
+44004444  PRECONFIG PROGRAM_WRITE_START
+44114444  PRECONFIG RECEIVE_DONE
 22222222  SYSTEM_FUNCTION_CHECK_PASS
 33333333  READY
+44004444  PROGRAM_WRITE_START
+44114444  RECEIVE_DONE
 44444444  PROGRAM_WRITE_DONE
+55000000  HART0_FIRST_COMMIT
+55010000  HART1_FIRST_COMMIT
+550000FF  HART0_STOPPED
+550100FF  HART1_STOPPED
 55555555  EH2_EXECUTE_DONE
-77777777  EXECUTE_END
-33333333  下一轮 READY
+77777777  END 后最后一帧；其物理发送完成后请求全局复位
 ```
 
-单元测试为加速仿真将 `PROGRAM_TIMEOUT_CYCLES` 设为 80、软复位长度设为 4、执行保护周期设为 4；该测试只覆盖正常状态路径，没有在此测试平台中等待真实 20 秒超时，也没有逐项注入全部错误码。
+单元测试为加速仿真将 `PROGRAM_TIMEOUT_CYCLES` 设为 80、执行保护周期设为 4；全局复位监督器的持续周期另做定向检查。该测试没有等待真实 20 秒超时，但对错误停止握手、复位请求、程序序号、DMA 配对和 RX/FCS CDC 使用独立定向平台覆盖。
 
 PROGRAM_WRITE 的配对逻辑使用 3 帧做最小定向反例：结束帧到达时锁存 `target=3`；当成功 DMA 完成数仅为 2 时必须继续停在 PROGRAM_WRITE；完成数变为 3 但 `dma_busy=1` 时仍不能通过；只有 `done_count=target=3` 且 `dma_busy=0` 才允许发送 PROGRAM_WRITE_DONE。这里的 3 只是控制器逻辑的最小反例，整机正式程序使用 782 帧。
 
 PRECONFIG 的“恰好一帧”由三部分验证：
 
 - 正常整机路径发送 1 帧全 FF 程序帧和结束帧，要求 DMA 完成、从 `0x80000000` 回读 1024 bytes 全 FF，并继续进入 READY；
-- `tb_preconfig_zero_frame_error` 在 0 帧后发送结束帧，要求进入锁定 ERROR；
-- `tb_preconfig_frame_count_error` 在 2 帧后发送结束帧，要求进入锁定 ERROR。
+- `tb_preconfig_zero_frame_error` 在 0 帧后发送结束帧，要求进入 ERROR、锁存包数错误并点亮 LED0；
+- `tb_preconfig_frame_count_error` 在 2 帧后发送结束帧，要求进入 ERROR、锁存包数错误并点亮 LED0；错误帧完成且收到主机停止确认后按统一策略执行全局复位并回到 PRECONFIG。
 
 最终标志：
 
 ```text
-TB_PASS controller frames=7
+TB_PASS controller frames=15
 ```
 
 ### 4.2 程序帧与系统信息帧接收隔离
@@ -138,7 +147,7 @@ TB_PASS controller frames=7
 
 测试平台依次输入：
 
-1. 一帧合法程序帧，共 1038 bytes/519 个 16-bit word；
+1. 一帧合法程序帧，共 1042 bytes/521 个 16-bit word，其中 payload 前两个 word 是 32-bit 帧序号；
 2. 一帧合法系统信息结束帧，共 60 bytes；
 3. 一帧目的地址和类型均不匹配的 60-byte 无关帧。
 
@@ -154,7 +163,7 @@ TB_PASS controller frames=7
 最终标志：
 
 ```text
-TB_PASS rx separation program_words=519 drops=1
+TB_PASS rx separation program_words=521 drops=1
 ```
 
 这项测试确认了共用同一个 MAC 时，系统帧不会进入程序 DMA，程序帧也不会进入系统信息 FIFO。
@@ -229,10 +238,10 @@ TB_PASS log packetizer frames=0 WAW_limit=483
 - 仅 hart0 执行 `csrw 0x7FC, t6`，其中 `t6=2`，用于启动 hart1；
 - 两个 hart 分别设置栈和私有数据区域；
 - hart0 和 hart1 各包含 100,000 条实际展开的静态指令，不用小循环制造约 20 万条动态提交；
-- 指令主体包含整数运算、乘法和 load/store；
+- 指令主体包含整数运算、乘法、load/store，以及显式的 load/div 后同目的寄存器写入 WAW 相关序列；
 - 两个 hart 最终分别向结束地址写入停止标志；
 - 程序本体 800,640 bytes，补零至 800,768 bytes；
-- 拆分成 782 帧，每帧为 14-byte header + 1024-byte payload。
+- 拆分成 782 帧，每帧为 14-byte header + 4-byte 大端序连续编号 + 1024-byte 程序数据。
 
 程序镜像清单 `programs/stress_200k_dualhart_system/build/image_manifest.json` 记录：
 
@@ -241,7 +250,8 @@ DDR base       = 0x80000000
 program bytes  = 800640
 payload bytes  = 800768
 frame count    = 782
-frame bytes    = 1038
+frame bytes    = 1042
+sequence bytes = 4
 destination    = 02:12:34:56:78:ff
 source         = 02:32:05:25:00:fe
 EtherType      = 0x88B6
@@ -343,8 +353,8 @@ Spike 相关产物：
 status                = PASS
 eh2_count             = 200044
 spike_count           = 200044
-exact_matches         = 200044
-accepted_waw_zero     = 0
+exact_matches         = 200011
+accepted_waw_zero     = 33
 missing_eh2_count     = 0
 missing_spike_count   = 0
 mismatches            = []
@@ -355,7 +365,9 @@ mismatches            = []
 - hart0 的 `csrw 0x7FC` 已按真实硬件指令参与 EH2/Spike 对照；
 - hart1 的启动点和后续执行序列与黄金参考一致；
 - EH2 前仿没有缺失或多生成 hash 输入；
-- 本测试程序实际没有产生需要记录的 WAW 取消项，因此四帧中的 `waw_count` 均为 0；WAW 的 483/484 容量边界由第 4.4 节的专用单元测试覆盖。
+- 33 条结构的 hart/package/sequence、PC、instruction 和 metadata 与 Spike 完全相同，只有 EH2 按设计把被 WAW 取消的晚返回结果清为 0；这些比较例外全部属于 hart1/package0，序号为 `267, 275, ..., 523`，间隔 8，共 33 项。
+- `accepted_waw_zero=33` 只统计“EH2 数据为 0 而 Spike 原始结果非 0”的 ISS 对比例外，不等于 RTL 输出的全部 WAW 取消事件。当前完整 WAW 导出为 hart0/package0 4 条、hart1/package0 128 条，总计 132 条。
+- 其余 200011 条结构逐位相同，且无缺失、无多余、无其他 mismatch。单帧 483/484 容量边界仍由第 4.4 节的专用单元测试覆盖。
 
 ## 7. 四个 package 的黄金归约结果
 
@@ -365,48 +377,50 @@ Spike 黄金文件、EH2 独立长仿真和整机 RGMII 发出的日志帧三者
 
 ```text
 count = 65536
-xor0  = 76ccccb33aaa814b
-xor1  = 93fc4eadc39c0713
-sum0  = d79da9c4a8c1172b
-sum1  = 71a8e130b96ce23d
-sum2  = e78ed7cd07513416
-sum3  = 8065836600100d79
+waw   = 4 (sequence 18, 20, 26, 28)
+xor0  = d31849f405d7893f
+xor1  = f362cffb3bd01126
+sum0  = 40883202d86e0925
+sum1  = c155b99763889958
+sum2  = f97364871915ade9
+sum3  = 7ec3152548d669c5
 ```
 
 ### hart0 / package1
 
 ```text
 count = 34487
-xor0  = 67be0dba06d069b8
-xor1  = 5b3e9695c386e524
-sum0  = 809873b9ea0e88de
-sum1  = e71f46f42d15c7aa
-sum2  = 0b124b71370e9c7a
-sum3  = 6bb71317ab29c8e0
+xor0  = ca29af3d5afed2de
+xor1  = dab2dbaec7cf9013
+sum0  = 304dcd82a6df56f4
+sum1  = 594544d87138de09
+sum2  = c90918dde2a98436
+sum3  = 86df023d8dec6168
 ```
 
 ### hart1 / package0
 
 ```text
 count = 65536
-xor0  = 794867dc6f2e5813
-xor1  = d6fca41457959ea0
-sum0  = 111d6cd4dede4589
-sum1  = f556f6ccda59d924
-sum2  = c525a2ab348fe23e
-sum3  = d42e5338c37d4d31
+waw   = 128 (完整序号见 webui/golden/stress_200k_system_golden.json)
+xor0  = bb84a72d88908184
+xor1  = 77ae970cea8f03ee
+sum0  = f0ba1c03f647a3d4
+sum1  = 07d2e3a5867b2f14
+sum2  = fec9fec6bbd4da0b
+sum3  = f9fc10899b8299e5
 ```
 
 ### hart1 / package1
 
 ```text
 count = 34485
-xor0  = ec93f7c948ad16d7
-xor1  = 2606358a233531bd
-sum0  = b9c6d21d8ff3f0ff
-sum1  = 3bbb835997d4fcaf
-sum2  = 799dc9857deec68b
-sum3  = ba99c046d6da89b5
+xor0  = b2c8ba18b57bb719
+xor1  = 1d356092b1daae53
+sum0  = 2f710fa64e36788d
+sum1  = ee452c2062e1d3ad
+sum2  = d772ad1beae8bdf4
+sum3  = cfaf9594c587af03
 ```
 
 ## 8. 系统顶层完整 RGMII 前仿
@@ -459,7 +473,9 @@ programs/stress_200k_dualhart_system/build/stress_200k_program_frames.mem16
 - Ethernet header 和 payload；
 - 按实际帧内容计算的 FCS；
 - RGMII 低/高 nibble 时序；
-- 帧间隔。
+- 协议允许的最小帧间隔：`RX_CTL` 连续低 24 个 DDR nibble，即 96 ns/12 byte IFG。
+
+程序数据阶段按 1 Gb/s RGMII 的每个上下沿连续发送，不插入软件节流。测试平台测量相邻帧的有效采样中心为 100 ns；扣除两侧半个 nibble 后，线上的空闲低电平恰好为 96 ns。PRECONFIG 程序帧到结束帧、782 帧正式程序以及其结束帧共检查 783 个最小 IFG，并对 MAC RX FIFO overflow、分类器 overflow 和识别长度错误分别做 sticky 断言。
 
 测试平台共从 RGMII RX 输入两类程序帧和两帧结束信息：
 
@@ -473,10 +489,10 @@ programs/stress_200k_dualhart_system/build/stress_200k_program_frames.mem16
 测试顺序和检查结果：
 
 1. 等待系统通过 MAC 发送 `11111111 PREINIT_DONE`；
-2. 从顶层 RGMII 输入一帧 1024-byte 全 FF 程序帧；
+2. 从顶层 RGMII 输入编号 0 的一帧 1024-byte 全 FF 程序数据；
 3. 帧通过 TEMAC、程序 RX FIFO 和 DataMover，从 AXI 地址 `0x80000000` 开始写入指令 DDR；
 4. 数据 DDR 一侧由 ATG 写入 1024-byte 全 FF；
-5. 从系统信息 MAC 地址输入 payload 前四字节全 FF 的结束帧；
+5. 观察首帧写入状态 `44004444`，再从系统信息 MAC 地址输入“前四字节全 FF、总包数为 1”的结束帧，并观察 `44114444`；
 6. 指令 DDR 和数据 DDR 同时切换给读比较器；
 7. 两侧回读均无 mismatch；
 8. 系统发送 `22222222 SYSTEM_FUNCTION_CHECK_PASS`。
@@ -487,9 +503,11 @@ programs/stress_200k_dualhart_system/build/stress_200k_program_frames.mem16
 SYSTEM_TX code=11111111
 PROGRAM_RX_ACCEPT
 PROGRAM_STREAM_DONE frames=1
-PROGRAM_DMA_DONE status=80040080
 INFO_RX_ACCEPT
 PROGRAM_END_MARKER
+SYSTEM_TX code=44004444
+SYSTEM_TX code=44114444
+PROGRAM_DMA_DONE status=80040080
 SYSTEM_TX code=22222222
 ```
 
@@ -505,26 +523,26 @@ PRECONFIG 通过后：
 - EH2 保持复位；
 - 数据 DDR 清零主机占有 DDR1；
 - 前仿清零 1 MiB 建模窗口；
-- 程序写入通路、发送通路和日志系统执行软复位；
-- MAC 和系统信息 RX/TX FIFO 不复位；
-- 清零及软复位完成后发送 `33333333 READY`；
+- 清零完成后只发出一个控制时钟的 `program_session_clear`，清除 PRECONFIG 的程序帧序号、包数、DMA done 数和写地址记账；
+- MAC、PHY、MIG、EH2、日志系统和系统信息 RX/TX FIFO 不在 READY 被复位；
+- 清零及程序记账清除完成后发送 `33333333 READY`；
 - 进入 PROGRAM_WRITE。
 
-END 完成后再次进入 READY，并再次观察到 `33333333`，从而检查了循环执行路径，不只是第一次启动路径。
+最终版本取消旧的会话软复位。END 完成后先确认 `55555555/77777777` 已物理发送，再由监督器拉低全系统复位 64 个 `ctrl_clk` 周期并回到 PRECONFIG。顶层长仿真只运行一次完整 20 万条闭环；全局复位持续时间、返回 PRECONFIG 和 ERROR/主机停止握手由定向平台检查，不为观察第二个 READY 再重复整套大程序。
 
 ### 8.6 PROGRAM_WRITE 验证
 
-在 PROGRAM_WRITE 中，测试平台从顶层 RGMII 输入完整的双 hart 大程序，共 782 个连续的 1038-byte Ethernet frame：
+在 PROGRAM_WRITE 中，测试平台从顶层 RGMII 输入完整的双 hart 大程序，共 782 个连续的 1042-byte Ethernet frame：
 
 - destination：`02:12:34:56:78:ff`；
 - source：`02:32:05:25:00:fe`；
 - EtherType：`0x88B6`；
 - 程序本体：800,640 bytes；
-- 补零后 payload 总量：800,768 bytes；
-- 每帧 payload：1024 bytes，帧数：782；
+- 补零后程序数据总量：800,768 bytes；
+- 每帧 payload：4-byte 连续编号 + 1024-byte 程序数据，帧数：782；
 - DDR 写入起始地址：`0x80000000`。
 
-测试平台发送完最后一帧程序帧后，立即从 RGMII 输入系统结束帧，中间不等待也不读取 FPGA 内部的 DMA done。状态机在收到结束帧时锁存程序帧累计数，并等待成功 DMA 完成累计数与其相等，从而确认完成的是结束帧前一程序帧，而不是更早的任意一帧；同时还要求 DMA 当前空闲，之后才发送：
+测试平台发送完最后一帧程序帧后，立即从 RGMII 输入系统结束帧，中间不等待也不读取 FPGA 内部的 DMA done。状态机先检查 782 个帧序号严格为 `0..781`，再比较结束帧声明总数、连续接收数和成功 DMA 完成数；三者相等且 DMA 当前空闲后才发送：
 
 ```text
 44444444 PROGRAM_WRITE_DONE
@@ -586,31 +604,38 @@ hart1 首次提交比 hart0 的 CSR 写提交晚约 520 ns。执行过程中的�
 
 在 EXECUTE 中系统信息 FIFO 不参与 MAC 仲裁，MAC TX 由 log FIFO 使用。四个日志帧发送完成后，状态机还要等待 EH2 IFU/LSU AXI outstanding 事务归零并连续保持 16 个周期，才允许切换到 END。
 
-### 8.8 END 和返回 READY
+### 8.8 END、全局复位和返回 PRECONFIG
 
 执行完成后进入 END，依次发送：
 
 ```text
+55000000 HART0_FIRST_COMMIT
+55010000 HART1_FIRST_COMMIT
+550000FF HART0_STOPPED
+550100FF HART1_STOPPED
 55555555 EH2_EXECUTE_DONE
 77777777 EXECUTE_END
 ```
 
-两帧发送完成后重新进入 READY，并发送第二次：
-
-```text
-33333333 READY
-```
+两帧只有在物理 MAC TX 完成计数确认后才允许提出 `global_reset_request`。监督器把全系统 reset 拉低 64 个 `ctrl_clk` 周期，覆盖 MAC、PHY、MIG、FIFO、程序 DMA、控制器、EH2 和日志路径；释放后状态从 PRECONFIG 重新开始，不直接发送第二次 READY。
 
 整机观察到的系统信息帧顺序严格为：
 
 ```text
 11111111
+44004444
+44114444
 22222222
 33333333
+44004444
+44114444
 44444444
+55000000
+55010000
+550000FF
+550100FF
 55555555
 77777777
-33333333
 ```
 
 ### 8.9 整机测试平台最终断言
@@ -619,7 +644,7 @@ hart1 首次提交比 hart0 的 CSR 写提交晚约 520 ns。执行过程中的�
 
 - 不能进入 ERROR，`led0` 不能点亮；
 - 两个 DDR AXI memory model 均不能出现 protocol error；
-- 7 个系统信息码必须全部出现且状态合法；
+- 14 个系统信息码必须全部出现且状态合法；PRECONFIG 与 PROGRAM_WRITE 各自的 START/RECEIVE_DONE 不能改变 DDR owner 或越过 DMA 配对条件；
 - 必须恰好发送 4 帧日志；
 - TEMAC 必须产生实际 RGMII TX 活动；
 - hart0 必须提交 CSR `0x7FC`；
@@ -630,22 +655,30 @@ hart1 首次提交比 hart0 的 CSR 写提交晚约 520 ns。执行过程中的�
 
 ```text
 SYSTEM_TX code=11111111 state=0
+SYSTEM_TX code=44004444 state=0
+SYSTEM_TX code=44114444 state=0
 SYSTEM_TX code=22222222 state=0
 SYSTEM_TX code=33333333 state=1
+SYSTEM_TX code=44004444 state=2
+SYSTEM_TX code=44114444 state=2
 SYSTEM_TX code=44444444 state=2
 HARTSTART_CSR_COMMIT hart=0 lane=0 pc=8000000c data=00000002
 HART1_FIRST_COMMIT lane=0 pc=80000000 insn=f1402473
+SYSTEM_TX code=55000000 state=3
+SYSTEM_TX code=55010000 state=3
 LOG_TX frame=1 package=0 hart=0 count=65536
 LOG_TX frame=2 package=0 hart=1 count=65536
 LOG_TX frame=3 package=1 hart=0 count=34487
 LOG_TX frame=4 package=1 hart=1 count=34485
+SYSTEM_TX code=550000ff state=3
+SYSTEM_TX code=550100ff state=3
 SYSTEM_TX code=55555555 state=4
 SYSTEM_TX code=77777777 state=4
-SYSTEM_TX code=33333333 state=1
-FULL_SYSTEM_RGMII_PASS frames=11 info=7 log=4 rgmii_cycles=4704 ddr_writes=12528/58026
+FULL_SYSTEM_RGMII_PASS frames=18 info=14 log=4 rgmii_cycles=5208 min_ifg=783 rx_overflow=0
+FULL_SYSTEM_FRAME_PASS frames=18 info=14 log=4 errors=0
 ```
 
-其中 `ddr_writes=12528/58026` 是两个 512-bit 前仿 DDR 模型接受的 W beat 统计，包含 PRECONFIG 功能检查、782 帧程序写入、处理器数据访问和两次 1 MiB 清零操作，只用于诊断，不代表板上 DDR 物理 burst 数。
+最终离线结果 `artifacts/sim/full_system_frame_verify.json` 记录 `status=PASS`、18 帧总数、14 个系统码和 4 帧日志。DDR 镜像另行确认 782 帧的 800768 byte 补零后数据逐字节一致；模型统计只用于诊断，不代表板上 DDR 物理 burst 数。
 
 最终运行时长：
 
@@ -672,7 +705,7 @@ artifacts/sim/full_system_frame_verify.json
 
 ### 9.1 系统信息帧复核
 
-对全部 7 帧检查：
+对全部 15 帧检查：
 
 - 60-byte 长度；
 - 广播目的 MAC；
@@ -681,6 +714,7 @@ artifacts/sim/full_system_frame_verify.json
 - payload[4:5] 为 `03 20`；
 - payload 后 40 bytes 全零；
 - 信息码顺序与预期完全一致。
+- PRECONFIG/PROGRAM_WRITE 的两组 `44004444/44114444` 均在对应状态出现；四个 hart start/done code 均在 EXECUTE 出现。
 
 ### 9.2 日志帧复核
 
@@ -694,6 +728,7 @@ artifacts/sim/full_system_frame_verify.json
 - 指令 count；
 - xor0、xor1、sum0、sum1、sum2、sum3；
 - WAW count 不得超过 483；
+- WAW 数量和每一个 16-bit sequence 必须与黄金 JSON 完全一致；本轮为 `4/0/128/0`，总计 132 条；
 - WAW 序号之后的剩余 payload 必须全零；
 - `(hart, package)` 不能重复；
 - 四个 `(hart, package)` 必须与 Spike 黄金文件一一对应；
@@ -703,8 +738,8 @@ artifacts/sim/full_system_frame_verify.json
 
 ```text
 status       = PASS
-frame_count  = 11
-info frames  = 7
+frame_count  = 19
+info frames  = 15
 log frames   = 4
 errors       = []
 ```
@@ -791,7 +826,7 @@ stopped == 2'b11
 && eh2_axi_idle 连续保持 16 个控制时钟周期
 ```
 
-整机前仿已经覆盖执行结束、总线排空、进入 END、再返回 READY 的完整路径；最终两个 DDR 模型都没有 owner 切换引起的协议错误。
+整机前仿已经覆盖执行结束、总线排空、进入 END、两帧物理发送完成和提出全局复位请求；定向复位平台覆盖 64-cycle reset 与返回 PRECONFIG。最终两个 DDR 模型都没有 owner 切换引起的协议错误。
 
 ### 10.5 连续程序帧下的 MAC RX FIFO overflow
 
@@ -801,15 +836,15 @@ stopped == 2'b11
 - 原 `mac_fifo_dma_proj` 读侧为 16 bit @ 125 MHz，峰值 250 MB/s，且头部判断与 payload 转发只走一遍；
 - 集成系统读侧为 16 bit @ 100 MHz，峰值 200 MB/s，仍高于写侧 125 MB/s。
 
-根因是旧版 `eth_rx_frame_classifier` 对整帧执行“先采集、后重放”。对 1038-byte 程序帧，共 519 个 16-bit word：
+根因是旧版 `eth_rx_frame_classifier` 对整帧执行“先采集、后重放”。按当前 1042-byte 程序帧计算，共 521 个 16-bit word：
 
 ```text
-采集时间 = 519 / 100 MHz = 5.19 µs
-重放时间 = 519 / 100 MHz = 5.19 µs
-总服务时间                 = 10.38 µs/帧
+采集时间 = 521 / 100 MHz = 5.21 µs
+重放时间 = 521 / 100 MHz = 5.21 µs
+总服务时间                 = 10.42 µs/帧
 ```
 
-重放期间 `mac_rx_ready=0`，MAC RX FIFO 不被读取。而千兆以太网在加上前导码、FCS 和最小 IFG 后，该帧的线速时间约为 8.50 µs。因此旧分类器有效服务能力只有约 100 MB/s，低于连续帧约 122 MB/s 的到达速率，4 KiB MAC RX FIFO 会逐帧累积并最终溢出。
+重放期间 `mac_rx_ready=0`，MAC RX FIFO 不被读取。而千兆以太网在加上前导码、FCS 和最小 IFG 后，该帧的线速时间约为 8.53 µs。因此旧分类器有效服务能力只有约 100 MB/s，低于连续帧约 122 MB/s 的到达速率，4 KiB MAC RX FIFO 会逐帧累积并最终溢出。
 
 修正后的分类器只缓存目的 MAC 所需的前 3 个 16-bit word，判定后对后续 word 单遍流式转发；程序帧进入 DMA，系统帧去掉 Ethernet header 后进入专用信息 FIFO，其他帧直接排空。修正后：
 
@@ -818,27 +853,27 @@ stopped == 2'b11
 - 782 帧全部观察到 `PROGRAM_STREAM_DONE` 和成功 `PROGRAM_DMA_DONE`；
 - 未再出现 RX FIFO overflow。
 
-### 10.6 第二次 READY 的过早结束判定
+### 10.6 旧版第二次 READY 判定及全局复位版替代
 
 第一次最终整机运行已经走到 `END -> READY`，四个归约帧也全部与 Spike 一致，但测试平台在看到 READY 状态后只再等待 2000 个 100 MHz 周期，即 20 µs，就结束仿真。第二轮 READY 要再次清零 1 MiB 数据 DDR，实际需要约 62.78 µs；因此当时只捕获到 6 个系统信息帧，离线校验脚本正确报告缺少最后的 `33333333`。
 
-这是测试平台判定过早，不是 DUT 的 READY 控制错误。修正后的结束条件为：
+这是旧版测试平台判定过早，不是 DUT 的 READY 控制错误。旧版曾把结束条件修正为：
 
 ```text
 ready_frame_count == 2
-&& tx_info_frame_count == 7
+&& tx_info_frame_count == 15
 ```
 
 测试平台必须从实际 MAC TX 捕获第二个 `33333333`，不再仅根据状态寄存器判定。最终重跑中：
 
 ```text
-STATE_TRANSITION 4 -> 1 time=26142655000
-SYSTEM_TX code=33333333 state=1 time=26205435000
-STATE_TRANSITION 1 -> 2 time=26205455000
-FULL_SYSTEM_RGMII_PASS frames=11 info=7 log=4
+STATE_TRANSITION 4 -> 1 time=26162515000
+SYSTEM_TX code=33333333 state=1
+STATE_TRANSITION 1 -> 2 time=26225315000
+FULL_SYSTEM_RGMII_PASS frames=19 info=15 log=4
 ```
 
-这证明 END 返回后的第二次 DDR 清零、READY 帧发送和下一轮 PROGRAM_WRITE 进入都已被完整覆盖。
+该 19 帧结果是取消软复位之前的历史回归证据。当前最终设计在 END 后改为全局复位并返回 PRECONFIG，因此最新一次顶层 20 万条仿真以 18 帧（14 系统+4日志）结束，再由定向平台检查全局复位；旧版第二个 READY 不再是最终协议的一部分。
 
 ### 10.7 RX FIFO overflow 错误事件的跨时钟域定向验证
 
@@ -860,6 +895,60 @@ RX_FIFO_OVERFLOW_CDC_PASS pulses=1 code=66660073 state=5 led0=1
 
 按验证范围约定，此项修改仅重跑针对性的 CDC 前仿，没有再次运行完整 20 万条整机长仿真。
 
+### 10.8 WAW direct-commit 事件漏导出
+
+早期日志只把 `rv_nb_waw_valid` 两路 pending-nonblocking victim 写入 WAW 序号存储，`rv_commit_waw_victim[1:0]` 已参与 hash 结构的 victim 清零，却没有进入 WAW sideband。因此归约值可以正确，而日志帧中的 WAW list 仍不完整；旧的 33 条 ISS 清零容差被误当成全部 WAW 数量。
+
+修正后 `instr_crc_hash_dual` 统一输出四槽：槽 0/1 是两路直接 commit victim，槽 2/3 是两路 pending-nonblocking victim。`waw_event_cdc` 为四槽分别使用 `33 bit × 16` 异步 FIFO，从 50 MHz 送往 100 MHz；`waw_sequence_store` 使用同拍前缀计数把同 hart/package 的多事件写入连续地址。四路的作用是保住同拍并发事件，不会改变每 hart/package 483 条的帧容量。
+
+验证分三层：
+
+- `tb_waw_export_early.sv` 在程序开头的 WAW 压力段逐事件检查，得到 `count=132, hart0=4, hart1=128`；
+- `tb_log_frame_packetizer.sv` 继续检查同拍多事件写入、逐项读出、483 条可发送和第 484 条触发 overflow；
+- 整机 782 帧长仿真从实际 RGMII TX 重组四个日志帧，离线工具把 WAW count 和全部 sequence 与黄金 JSON 逐项比较，结果为 `4/0/128/0`，无遗漏、重复或乱序。
+
+### 10.9 PRECONFIG 状态码扩展引起的 DDR owner 提前切换
+
+PRECONFIG 增加 `PROGRAM_WRITE_START` 和 `RECEIVE_DONE` 后，内部 phase 使用了 6、7、8、9 等新编号。旧 owner 组合逻辑用 `phase < 3` 判断“程序/ATG 写入窗口”，因此 phase 从 2 跳到 6 只是为了发送状态码，却被错误解释为写入阶段已结束，DDR0 被过早交给 checker、DDR1 也可能过早离开 ATG。这会使一帧 DMA 尚未完成时失去总线控制权。
+
+修正后 owner 不再依赖 phase 数值的大小关系：PRECONFIG 只有 3/4/5 三个明确的回读/报告 phase 交给 checker，其余 phase 均保持 DDR0=PROGRAM、DDR1=ATG。测试平台增加断言：在结束帧总数、连续接收帧数、DMA done 数和 idle 尚未同时成立前，`instr_check_start` 不得拉高；最终确认 START/RECEIVE 状态帧本身只报告进度，不改变程序写入语义。
+
+### 10.10 RGMII 全速激励的 DDR nibble 相位
+
+全速压力激励最初在不同 task 调用之间偶尔多等待一个同极性边沿，导致下一帧低/高 nibble 与 TEMAC behavioral model 的采样相位错半周期。症状是原始 RX byte 数接近 0、bad frame 增长，看起来像 DUT 在全速下丢帧，实际是测试平台没有持续保持 DDR 相位。
+
+修正后的发送 task 固定在外部下降沿驱动低 nibble、上升沿驱动高 nibble，并记录相邻帧第一个有效采样中心。每次连续 burst 都断言中心间隔为 100 ns：扣除两侧半个 nibble 后，RX_CTL 低电平正好是 IEEE 802.3 最小 96 ns IFG。最终 782 帧以协议允许的最小 IFG 连续输入，`min_ifg=783` 个相邻帧间隔检查全部通过，MAC RX FIFO、分类器和识别长度 overflow 均为 0。
+
+### 10.11 程序序号立即拒绝与会话重装
+
+`tb/tb_program_rx_dma_sequence.sv` 直接驱动正式 `program_rx_dma_ctrl`，验证帧 payload 的前 32 bit 只作为大端序编号，不送入 1024-byte DataMover 数据区。编号不等于当前 `expected_sequence` 时，控制器在该帧内立即锁存 `sequence_error`、拒绝 DMA command/data，不等结束帧的总数比较；`session_clear` 后编号、计数和 DDR 首地址都重新装载。结束标志为：
+
+```text
+TB_PASS program sequence immediate-reject/reload cmd=1 payload=512
+```
+
+这里的 `payload=512` 表示一个合法帧送给 16-bit DataMover 流的 512 个 word，即恰好 1024 byte，不包含 4-byte 编号。
+
+### 10.12 MAC FCS 统计、CDC 与 ERROR/主机停止握手
+
+TEMAC 会在用户 RX 数据口之前丢弃坏 FCS 帧；若只检查分类器计数，坏帧会表现为“包编号缺失、超时或没有响应”，无法区分物理采样问题。`mac_rx_statistics_cdc` 在 RX 统计域检测 FCS 统计 bit2 的新增事件，源端累计计数并用请求/确认方式跨到 100 MHz 控制域。定向测试 `tb/tb_mac_rx_statistics_cdc.sv` 注入两个事件，要求脉冲和累计数都恰好为 2：
+
+```text
+TB_PASS MAC RX FCS event/count CDC pulses=2 count=2
+```
+
+`tb/tb_error_global_reset_flow.sv` 进一步验证：程序序号错误和 FCS 错误均立即锁存 first error、进入 ERROR、只发送一次对应错误码；在没有主机停止确认时不得请求复位；主机回送 `0x44124445` 且错误帧物理发送完成后才产生全局复位请求。结束标志为：
+
+```text
+TB_PASS immediate sequence/FCS error and global reset handshake
+```
+
+这保证 FPGA 不会在 PC 仍以线速发送旧会话程序帧时自行复位并把尾帧接到下一会话。WebUI 对应逻辑在收到任意 error code 时立即停止发送循环、发送一次 `HOST_SEND_STOPPED`，并把时间戳和错误码保存到日志。
+
+### 10.13 确定性 PHY RX 启动放行的验证边界
+
+硬件默认路径依次要求：DP83867 延时寄存器写入并回读正确、自动协商完成、链路连续稳定 100 ms、1 ms IDELAY guard、`rgmii_rxc` 域连续 4096 个边沿，然后才释放 RX client FIFO。RTL/参数、寄存器值和 XDC 的 `RX≈1.25 ns + FPGA IODELAY=1100 ps` 已在综合前做一致性审查；最新实现进一步对外部 RGMII 输入路径完成静态时序签核。由于 behavioral 顶层没有串行 MDIO PHY 和模拟数据眼模型，20 万条前仿旁路了真实 PHY 管理过程，只验证放行后的完整 RGMII/MAC/FIFO/分类/DMA路径。PHY 延时、温压和板间偏差仍必须用新 bitstream 上板压力回归确认。
+
 ## 11. 验证产物索引
 
 ### 单元测试
@@ -869,11 +958,17 @@ RX_FIFO_OVERFLOW_CDC_PASS pulses=1 code=66660073 state=5 led0=1
 - `tb/tb_ddr_masters.sv`
 - `tb/tb_log_frame_packetizer.sv`
 - `tb/tb_rx_fifo_overflow_cdc.sv`
+- `tb/tb_mac_rx_statistics_cdc.sv`
+- `tb/tb_program_rx_dma_sequence.sv`
+- `tb/tb_error_global_reset_flow.sv`
+- `tb/tb_waw_export_early.sv`
+- `scripts/run_waw_export_early_sim.ps1`
 - `scripts/run_unit_sims.ps1`
 - `xsim_5584.backup.log`
 - `xsim_41172.backup.log`
 - `xsim_22512.backup.log`
 - `xsim.log`
+- `artifacts/sim/waw_export_early_xsim.log`
 
 ### EH2 长仿真和 Spike
 
@@ -912,13 +1007,13 @@ RX_FIFO_OVERFLOW_CDC_PASS pulses=1 code=66660073 state=5 led0=1
 3. 没有在前仿中实际清零 4 GiB，只清零 1 MiB 建模窗口；
 4. 没有 MDIO PHY 串行模型，因此未验证 DP83867 寄存器写入波形、自动协商和真实网线链路；
 5. 没有验证操作系统/网卡驱动对自定义 EtherType 的实际抓包行为；
-6. 整机已覆盖 800,640-byte 大程序拆分为 782 个连续程序帧的正常写入，但没有覆盖帧乱序、丢包、重复帧和重传；
-7. 20 万条测试程序没有产生 WAW 取消项；WAW 内容封帧和 483/484 容量边界由专用单元测试覆盖；
+6. 整机已覆盖 800,640-byte 大程序拆分为 782 个连续程序帧的正常写入，并验证严格连续编号和结束帧总包数；定向测试覆盖了序号/总包数错误，但协议不提供 ACK 或重传；
+7. 20 万条程序实际导出 132 个 WAW 取消事件，整机逐项验证 `4/0/128/0`；483/484 容量边界另由专用单元测试覆盖；
 8. 20 秒 program write overtime 未在整机仿真中实际等待触发；
-9. 错误监测平台在整机正常路径中验证了“不得误报”，并对 RX MAC FIFO overflow 的跨时钟域传播、错误码、ERROR 状态和 LED 做了定向故障注入；其余错误源尚未逐项注入；
-10. 没有执行综合、实现、静态时序、完整 CDC 报告、bitstream 生成或本工程上板验证。
+9. 错误监测平台在整机正常路径中验证了“不得误报”，并对 RX MAC FIFO overflow、MAC FCS 统计 CDC、程序序号立即拒绝、ERROR/LED、主机停止确认和全局复位握手做了定向故障注入；其余错误源尚未逐项注入；
+10. 本工程已另外完成综合、实现、静态时序、bus-skew、DRC 和 bitstream 生成；这些属于板级实现签核而不是 behavioral 前仿，结果见 `system_board_readme.md`。本次仍未对新整机 bitstream 做板上回归。
 
-因此当前可以确认的是：在 behavioral simulation 覆盖范围内，从顶层 RGMII 连续接收 782 个程序帧、DMA 写入 `0x80000000`、六状态正常转移、双 hart 启动与执行、200044 条结构级 ISS 对照、四个归约包、END 后第二次 READY 和最终 RGMII 发送帧全部一致；物理 PHY、物理 DDR、网表时序和硬件板级行为仍需后续实现及上板阶段确认。
+因此当前可以确认的是：在 behavioral simulation 覆盖范围内，从顶层 RGMII 以最小 IFG 连续接收 782 个程序帧、DMA 写入 `0x80000000`、六状态正常转移、双 hart 启动与执行、200044 条结构级 ISS 对照、132 条 WAW 导出、四个归约包、END 的两帧物理发送、全局复位请求以及最终 RGMII 发送帧全部一致；程序序号/FCS错误和主机停止握手由定向平台通过。物理 PHY、物理 DDR 和新整机的板上行为仍需上板确认。
 
 ## 13. 复现命令
 

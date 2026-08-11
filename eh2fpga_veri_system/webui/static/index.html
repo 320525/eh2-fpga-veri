@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EH2 板级监测与程序烧写平台</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2212%22 fill=%22%231769e0%22/><text x=%2232%22 y=%2242%22 text-anchor=%22middle%22 font-size=%2230%22 fill=%22white%22>EH</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">EH2 BOARD WEBUI</p>
+      <h1>板级监测与程序烧写平台</h1>
+    </div>
+    <div class="state-wrap">
+      <span>当前板卡状态</span>
+      <strong id="boardState" class="state disconnected">DISCONNECTED</strong>
+      <small id="lastCode">尚未收到系统信息帧</small>
+    </div>
+  </header>
+
+  <main>
+    <section class="card connection-card">
+      <div class="section-title">
+        <div><span class="step">1</span><h2>连接与持续监听</h2></div>
+        <span id="captureBadge" class="pill idle">未监听</span>
+      </div>
+      <div class="controls wide-controls">
+        <label class="grow">有线网卡
+          <select id="interfaceSelect"></select>
+        </label>
+        <button id="refreshInterfaces" class="secondary">刷新网卡</button>
+        <button id="startCapture" class="primary">开始监听</button>
+        <button id="stopCapture" class="danger-outline">停止监听</button>
+      </div>
+      <p id="networkDiagnostic" class="hint">正在检查 Scapy 和 Npcap…</p>
+      <div class="protocol-strip">
+        <span>程序目的 MAC <b>02:12:34:56:78:FF</b></span>
+        <span>结束帧目的 MAC <b>02:32:05:25:00:FF</b></span>
+        <span>主机源 MAC <b>02:32:05:25:00:FE</b></span>
+      </div>
+    </section>
+
+    <section class="two-column">
+      <article class="card">
+        <div class="section-title">
+          <div><span class="step">2</span><h2>PRECONFIG 通路检查</h2></div>
+        </div>
+        <p>收到 <code>11111111 PREINIT_DONE</code> 后，发送一帧1024字节全FF程序帧，并立即发送结束帧。</p>
+        <button id="sendPreconfig" class="primary full">发送 PRECONFIG 检查帧</button>
+        <p class="hint">正常结果依次为 <code>22222222 CHECK_PASS</code> 和 <code>33333333 READY</code>。</p>
+      </article>
+
+      <article class="card">
+        <div class="section-title">
+          <div><span class="step">3</span><h2>载入原始程序</h2></div>
+        </div>
+        <div class="file-row">
+          <input id="programFile" type="file" accept=".bin,application/octet-stream">
+          <button id="inspectProgram" class="secondary">检查 .bin</button>
+        </div>
+        <div id="programManifest" class="manifest empty">尚未载入程序</div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div><span class="step">4</span><h2>发送程序</h2></div>
+        <span id="txBadge" class="pill idle">发送器空闲</span>
+      </div>
+      <div class="controls">
+        <label>帧间隔（微秒）
+          <input id="interFrameUs" type="number" min="0" max="100000" value="0">
+        </label>
+        <label class="check"><input id="forceSend" type="checkbox"> 忽略状态限制（调试）</label>
+        <button id="sendProgram" class="accent">发送全部程序帧</button>
+      </div>
+      <div class="progress-track"><div id="txProgress" class="progress-bar"></div></div>
+      <div class="progress-label"><span id="txOperation">无发送任务</span><span id="txCount">0 / 0</span></div>
+      <div class="controls">
+        <button id="clearLogs" class="secondary">清理当前残留日志</button>
+        <button id="saveLogs" class="primary">保存当前日志快照</button>
+      </div>
+      <details class="advanced">
+        <summary>高级调试操作</summary>
+        <p>单独发送结束帧可能使板卡锁存错误帧数，只应在明确理解控制器状态时使用。</p>
+        <button id="sendEndOnly" class="danger-outline">只发送结束帧</button>
+      </details>
+    </section>
+
+    <section class="stats-grid">
+      <div class="metric"><span>接收总帧</span><strong id="rxTotal">0</strong></div>
+      <div class="metric"><span>系统信息</span><strong id="rxSystem">0</strong></div>
+      <div class="metric"><span>归约日志</span><strong id="rxLog">0</strong></div>
+      <div class="metric"><span>非法帧</span><strong id="rxInvalid">0</strong></div>
+      <div class="metric"><span>已发送帧</span><strong id="txTotal">0</strong></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div><span class="step">5</span><h2>接收的系统信息日志</h2></div>
+        <span class="hint">按实际接收时间显示状态、通知和错误信息</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>时间戳</th><th>代码</th><th>名称</th><th>对应状态</th><th>说明</th></tr></thead>
+          <tbody id="systemMessageBody"><tr><td colspan="5" class="empty-cell">尚未收到系统信息</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div><span class="step">6</span><h2>双 hart 归约结果</h2></div>
+        <span class="hint">自动与本工程20万条程序的 Spike 黄金值比较</span>
+      </div>
+      <div id="comparisonSummary" class="manifest empty">等待归约结果</div>
+      <div id="latestReduction" class="waw-panel">尚未收到最后归约信息</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>时间戳</th><th>hart</th><th>package</th><th>count</th><th>WAW</th><th>xor0</th><th>xor1</th><th>sum0</th><th>sum1</th><th>sum2</th><th>sum3</th><th>黄金比较</th></tr>
+          </thead>
+          <tbody id="reductionBody"><tr><td colspan="12" class="empty-cell">尚未收到日志帧</td></tr></tbody>
+        </table>
+      </div>
+      <div id="wawDetails" class="waw-panel">选择有 WAW 数据的结果后可在此查看全部取消序号。</div>
+    </section>
+
+    <section class="two-column lower">
+      <article class="card">
+        <div class="section-title"><div><span class="step">7</span><h2>系统事件时间线</h2></div></div>
+        <div id="eventTimeline" class="timeline"><p class="empty-cell">尚无事件</p></div>
+      </article>
+      <article class="card">
+        <div class="section-title"><div><span class="step">8</span><h2>当前会话文件</h2></div></div>
+        <p class="hint">监听开始后，接收帧、发送帧、状态和归约结果持续保存在 webui/runtime/sessions。</p>
+        <div id="sessionFiles" class="file-list"><p class="empty-cell">尚未建立会话</p></div>
+      </article>
+    </section>
+
+    <section class="card golden-card">
+      <div class="section-title"><div><h2>20万条程序板级比较基准</h2></div></div>
+      <div id="goldenSummary">正在载入黄金结果…</div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

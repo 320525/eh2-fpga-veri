@@ -3,7 +3,7 @@
 # The J22 pinout cannot use the stock TEMAC TXC delay cascade because the TXC
 # pin and an RX data pin share the required adjacent BITSLICE resource.  The
 # TEMAC wrapper therefore sends TXC edge-aligned and MDIO programs both PHY
-# delay fields to TX code 7 (2.00 ns) and RX code 5 (1.50 ns).
+# delay fields to TX code 7 (2.00 ns) and RX code 4 (1.25 ns).
 #
 # DP83867 receiver requirements with internal delay are 1.00 ns setup and
 # 1.00 ns hold.  Vivado output delays are referenced to forwarded TXC at the
@@ -24,18 +24,20 @@ set_output_delay -3.000 -min -clock $rgmii_tx_phy_clock -clock_fall \
 
 # The TEMAC core defaults model a 2.00 ns shifted PHY receive clock with
 # input delays of -1.00/-2.00 ns.  MDIO programs the independent DP83867 RX
-# delay to 1.50 ns, so both limits move 0.50 ns later.  Keep this file LATE so
+# delay to 1.25 ns, so both limits move 0.75 ns later.  This also moves 0.25 ns
+# of the previous 0.628 ns setup / 0.047 ns hold budget into the hold side.
+# Keep this file LATE so
 # these board-specific values replace (rather than hide) the IP defaults.
 set rgmii_rx_virtual_clock [get_clocks -quiet -filter \
   {NAME =~ *_rgmii_rx_clk && IS_GENERATED == 0}]
 set rgmii_rx_phy_data [get_ports {rgmii_rxd[*] rgmii_rx_ctl}]
-set_input_delay -0.500 -max -clock $rgmii_rx_virtual_clock \
+set_input_delay -0.250 -max -clock $rgmii_rx_virtual_clock \
   $rgmii_rx_phy_data
-set_input_delay -1.500 -min -clock $rgmii_rx_virtual_clock \
+set_input_delay -1.250 -min -clock $rgmii_rx_virtual_clock \
   $rgmii_rx_phy_data
-set_input_delay -0.500 -max -clock $rgmii_rx_virtual_clock -clock_fall \
+set_input_delay -0.250 -max -clock $rgmii_rx_virtual_clock -clock_fall \
   $rgmii_rx_phy_data
-set_input_delay -1.500 -min -clock $rgmii_rx_virtual_clock -clock_fall \
+set_input_delay -1.250 -min -clock $rgmii_rx_virtual_clock -clock_fall \
   $rgmii_rx_phy_data
 
 # PG051 explicitly permits tuning the input IODELAY from a late user PHY
@@ -61,3 +63,15 @@ set_false_path -to [get_pins -quiet -hier -regexp \
   {(^|.*/)rx_fifo_overflow_cdc_i/toggle_sync_reg\[0\]/D$}]
 set_false_path -to [get_pins -quiet -hier -regexp \
   {(^|.*/)rx_client_fifo_i/resync_wr_store_frame_tog/data_sync_reg0/D$}]
+
+# The PHY receive clock is recovered from the Ethernet link and has no phase
+# relationship to the board's 100 MHz control clock (or its generated clocks).
+# The TEMAC RX client FIFO and the explicit overflow-toggle synchronizer are
+# the only crossings at this boundary.  Declaring the domains asynchronous
+# removes the false related-clock assumption reported by TIMING-6/TIMING-7.
+# Keep this as a pure XDC command.  Conditional Tcl commands are rejected when
+# Vivado imports scoped constraints into the synthesized design.  Both clocks
+# are created by earlier board/IP constraints and are mandatory for this top.
+set_clock_groups -asynchronous \
+  -group [get_clocks -include_generated_clocks atg_clk] \
+  -group [get_clocks -include_generated_clocks rgmii_rxc]

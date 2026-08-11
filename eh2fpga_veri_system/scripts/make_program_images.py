@@ -11,7 +11,9 @@ from pathlib import Path
 PROGRAM_DEST = bytes.fromhex("02 12 34 56 78 ff")
 HOST_SOURCE = bytes.fromhex("02 32 05 25 00 fe")
 PROGRAM_ETHERTYPE = bytes.fromhex("88 b6")
-PAYLOAD_BYTES = 1024
+PROGRAM_BYTES_PER_FRAME = 1024
+SEQUENCE_BYTES = 4
+PAYLOAD_BYTES = SEQUENCE_BYTES + PROGRAM_BYTES_PER_FRAME
 HEADER_BYTES = 14
 
 
@@ -33,8 +35,13 @@ def main() -> None:
         )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    frame_count = max(1, (len(program) + PAYLOAD_BYTES - 1) // PAYLOAD_BYTES)
-    payload_image = program.ljust(frame_count * PAYLOAD_BYTES, b"\x00")
+    frame_count = max(
+        1,
+        (len(program) + PROGRAM_BYTES_PER_FRAME - 1) // PROGRAM_BYTES_PER_FRAME,
+    )
+    payload_image = program.ljust(
+        frame_count * PROGRAM_BYTES_PER_FRAME, b"\x00"
+    )
     memory_image = program.ljust(args.memory_bytes, b"\x00")
 
     mem64_path = args.output_dir / "stress_200k_dualhart_system.mem64"
@@ -47,10 +54,17 @@ def main() -> None:
     frame_offsets = []
     for index in range(frame_count):
         payload = payload_image[
-            index * PAYLOAD_BYTES:(index + 1) * PAYLOAD_BYTES
+            index * PROGRAM_BYTES_PER_FRAME:
+            (index + 1) * PROGRAM_BYTES_PER_FRAME
         ]
         frame_offsets.append(len(frames))
-        frames.extend(PROGRAM_DEST + HOST_SOURCE + PROGRAM_ETHERTYPE + payload)
+        frames.extend(
+            PROGRAM_DEST
+            + HOST_SOURCE
+            + PROGRAM_ETHERTYPE
+            + index.to_bytes(SEQUENCE_BYTES, "big")
+            + payload
+        )
 
     frames_bin_path = args.output_dir / "stress_200k_program_frames.bin"
     frames_bin_path.write_bytes(frames)
@@ -75,6 +89,8 @@ def main() -> None:
         "ddr_base": f"0x{args.base:08x}",
         "program_bytes": len(program),
         "padded_payload_bytes": len(payload_image),
+        "program_bytes_per_frame": PROGRAM_BYTES_PER_FRAME,
+        "sequence_bytes": SEQUENCE_BYTES,
         "frame_count": frame_count,
         "frame_bytes": HEADER_BYTES + PAYLOAD_BYTES,
         "frame_words_16": (HEADER_BYTES + PAYLOAD_BYTES) // 2,

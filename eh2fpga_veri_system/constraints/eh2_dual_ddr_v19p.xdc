@@ -307,4 +307,7 @@ set_property PACKAGE_PIN V39 [get_ports {c1_ddr4_dqs_t[7]}]
 set_property PACKAGE_PIN A29 [get_ports {c1_ddr4_dqs_c[8]}]
 set_property PACKAGE_PIN A30 [get_ports {c1_ddr4_dqs_t[8]}]
 
-set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]
+# Uncompressed configuration is required on the 16.9 GB build host: the
+# compressed VU19P bitgen pass exceeded practical memory after route sign-off.
+# This affects file size/configuration transfer only, not FPGA functionality.
+set_property BITSTREAM.GENERAL.COMPRESS FALSE [current_design]

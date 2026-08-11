@@ -58,10 +58,10 @@ module instr_crc_hash_dual #(
     output logic [1:0]                   buffer_conflict_hart,
     output logic [1:0]                   fifo_overflow_hart,
     output logic [1:0]                   bank_conflict_hart,
-    output logic [1:0]                   waw_cancel_valid,
-    output logic [1:0]                   waw_cancel_hart,
-    output logic [1:0][15:0]             waw_cancel_package,
-    output logic [1:0][15:0]             waw_cancel_sequence,
+    output logic [3:0]                   waw_cancel_valid,
+    output logic [3:0]                   waw_cancel_hart,
+    output logic [3:0][15:0]             waw_cancel_package,
+    output logic [3:0][15:0]             waw_cancel_sequence,
     output logic [1:0]                   stopped,
     output logic [1:0][15:0]            sequence_number,
     output logic [1:0][15:0]            package_number,
@@ -365,34 +365,47 @@ module instr_crc_hash_dual #(
         end
     end
 
-    // Export the exact sequence/package assigned when a pending nonblocking
-    // instruction is cancelled by EH2's WAW indication.  Lane 1 is suppressed
-    // only if both hardware cancel lanes identify the same victim.
+    // Export every instruction whose result is cancelled by WAW.  Slots 0/1
+    // are the two commit lanes' same-cycle victims; these are already emitted
+    // as direct zero-result structures above.  Slots 2/3 are older pending
+    // nonblocking victims identified by EH2's two sideband lanes.  Keeping the
+    // classes in four independent slots avoids losing an event if a direct
+    // victim and one or two nonblocking victims occur in the same cycle.
     always_comb begin
-        waw_cancel_valid    = 2'b0;
-        waw_cancel_hart     = 2'b0;
+        waw_cancel_valid    = 4'b0;
+        waw_cancel_hart     = 4'b0;
         waw_cancel_package  = '0;
         waw_cancel_sequence = '0;
+        for (integer direct_lane = 0; direct_lane < 2;
+             direct_lane = direct_lane + 1) begin
+            waw_cancel_hart[direct_lane] = rv_commit_hart_id[direct_lane];
+            waw_cancel_valid[direct_lane] =
+                process_valid[direct_lane] &
+                rv_commit_waw_victim[direct_lane] &
+                (rv_commit_gpr_rd[direct_lane] != 0);
+            waw_cancel_package[direct_lane] = lane_package[direct_lane];
+            waw_cancel_sequence[direct_lane] = lane_sequence[direct_lane];
+        end
         for (integer waw_lane = 0; waw_lane < 2; waw_lane = waw_lane + 1) begin
-            waw_cancel_hart[waw_lane] = rv_nb_waw_victim_hart_id[waw_lane];
+            waw_cancel_hart[waw_lane+2] = rv_nb_waw_victim_hart_id[waw_lane];
             if ((rv_nb_waw_victim_gpr_rd[waw_lane] != 0) &&
                 nb_valid[rv_nb_waw_victim_hart_id[waw_lane]]
                         [rv_nb_waw_victim_gpr_rd[waw_lane]] &&
                 !nb_resolved[rv_nb_waw_victim_hart_id[waw_lane]]
                             [rv_nb_waw_victim_gpr_rd[waw_lane]]) begin
-                waw_cancel_valid[waw_lane] = rv_nb_waw_valid[waw_lane];
-                waw_cancel_package[waw_lane] =
+                waw_cancel_valid[waw_lane+2] = rv_nb_waw_valid[waw_lane];
+                waw_cancel_package[waw_lane+2] =
                     nb_struct[rv_nb_waw_victim_hart_id[waw_lane]]
                              [rv_nb_waw_victim_gpr_rd[waw_lane]][159:144];
-                waw_cancel_sequence[waw_lane] =
+                waw_cancel_sequence[waw_lane+2] =
                     nb_struct[rv_nb_waw_victim_hart_id[waw_lane]]
                              [rv_nb_waw_victim_gpr_rd[waw_lane]][143:128];
             end
         end
-        if (waw_cancel_valid[0] && waw_cancel_valid[1] &&
+        if (waw_cancel_valid[2] && waw_cancel_valid[3] &&
             (rv_nb_waw_victim_hart_id[0] == rv_nb_waw_victim_hart_id[1]) &&
             (rv_nb_waw_victim_gpr_rd[0] == rv_nb_waw_victim_gpr_rd[1]))
-            waw_cancel_valid[1] = 1'b0;
+            waw_cancel_valid[3] = 1'b0;
     end
 
     // Find the first four ready nonblocking entries independently for each

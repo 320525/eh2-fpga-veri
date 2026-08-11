@@ -53,6 +53,10 @@ Run-Xsim 'tb_eth_rx_separation' @(
   'rtl\eth\system_info_rx_decoder.sv',
   'tb\tb_eth_rx_separation.sv'
 )
+Run-Xsim 'tb_program_rx_dma_sequence' @(
+  'rtl\eth\program_rx_dma_ctrl.v',
+  'tb\tb_program_rx_dma_sequence.sv'
+)
 Run-Xsim 'tb_ddr_masters' @(
   'rtl\common\axi4_if.sv',
   'rtl\common\axi_owner_mux2.sv',
@@ -71,4 +75,17 @@ Run-Xsim 'tb_rx_fifo_overflow_cdc' @(
   'rtl\control\system_error_monitor.sv',
   'rtl\control\eh2_system_controller.sv',
   'tb\tb_rx_fifo_overflow_cdc.sv'
+)
+Run-Xsim 'tb_error_global_reset_flow' @(
+  'rtl\common\eh2_system_pkg.sv',
+  'rtl\common\system_global_reset_supervisor.sv',
+  'rtl\control\system_error_monitor.sv',
+  'rtl\control\eh2_system_controller.sv',
+  'tb\tb_error_global_reset_flow.sv'
+)
+Run-Xsim 'tb_mac_rx_statistics_cdc' @(
+  'rtl\common\event_toggle_cdc.sv',
+  'rtl\common\sync_bits.sv',
+  'rtl\eth\mac_rx_statistics_cdc.sv',
+  'tb\tb_mac_rx_statistics_cdc.sv'
 )

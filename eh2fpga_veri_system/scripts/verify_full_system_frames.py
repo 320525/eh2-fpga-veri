@@ -10,12 +10,19 @@ from pathlib import Path
 
 INFO_CODES = [
     0x11111111,  # preinit done
+    0x44004444,  # preconfig program write start
+    0x44114444,  # preconfig end marker received
     0x22222222,  # system function check pass
     0x33333333,  # ready
+    0x44004444,  # real program write start
+    0x44114444,  # real end marker received
     0x44444444,  # program write done
+    0x55000000,  # hart0 first instruction committed
+    0x55010000,  # hart1 first instruction committed
+    0x550000FF,  # hart0 execution stopped
+    0x550100FF,  # hart1 execution stopped
     0x55555555,  # EH2 execution done
     0x77777777,  # execution end
-    0x33333333,  # END returns to READY; DDR clear completes and READY repeats
 ]
 SYSTEM_SOURCE = bytes.fromhex("0232052500ff")
 LOG_SOURCE = bytes.fromhex("0212345678ff")
@@ -103,6 +110,10 @@ def main() -> None:
                 for i, name in enumerate(hash_names)
             }
             waw_count = be_u16(frame[70:72]) & 0x1FF
+            waw_sequences = [
+                be_u16(frame[offset:offset + 2])
+                for offset in range(72, 72 + 2 * waw_count, 2)
+            ]
             if waw_count > 483:
                 errors.append(f"frame {frame_index}: WAW count {waw_count}")
             if any(frame[72 + 2*waw_count:]):
@@ -122,6 +133,17 @@ def main() -> None:
                             f"frame {frame_index}: {name} {hashes[name]} "
                             f"!= {expected[name]}"
                         )
+                expected_waw = expected.get("waw_sequences")
+                if expected_waw is not None and waw_sequences != expected_waw:
+                    errors.append(
+                        f"frame {frame_index}: WAW sequences "
+                        f"{waw_sequences} != {expected_waw}"
+                    )
+                if waw_count != expected.get("waw_count", 0):
+                    errors.append(
+                        f"frame {frame_index}: WAW count {waw_count} != "
+                        f"{expected.get('waw_count', 0)}"
+                    )
             if key in seen_log:
                 errors.append(f"frame {frame_index}: duplicate log key {key}")
             seen_log.add(key)
@@ -132,6 +154,7 @@ def main() -> None:
                     "package": package,
                     "count": count,
                     "waw_count": waw_count,
+                    "waw_sequences": waw_sequences,
                     **hashes,
                 }
             )

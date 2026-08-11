@@ -16,6 +16,7 @@ module program_rx_dma_ctrl #(
 ) (
   input  wire        clk,
   input  wire        resetn,
+  input  wire        session_clear,
 
   // RX FIFO read-side interface.
   input  wire [15:0] rx_fifo_tdata,
@@ -46,6 +47,7 @@ module program_rx_dma_ctrl #(
   output reg         frame_done,
   output reg         dma_done,
   output reg         dma_error,
+  output reg         sequence_error,
   output reg         frame_length_error,
   output reg  [31:0] last_dma_status,
   output wire        dma_busy
@@ -66,12 +68,15 @@ module program_rx_dma_ctrl #(
   localparam [2:0] ST_MOVE_PAYLOAD   = 3'd2;
   localparam [2:0] ST_WAIT_STATUS    = 3'd3;
   localparam [2:0] ST_DROP_FRAME     = 3'd4;
+  localparam [2:0] ST_READ_SEQUENCE  = 3'd5;
 
   reg [2:0] state;
   reg [2:0] discard_count;
   reg [9:0] payload_word_count;
   reg [3:0] active_tag;
   reg       dest_match;
+  reg       sequence_half;
+  reg [15:0] sequence_word0;
 
   wire rx_transfer;
   wire payload_transfer;
@@ -79,6 +84,7 @@ module program_rx_dma_ctrl #(
   wire status_transfer;
 
   assign rx_fifo_tready = (state == ST_DISCARD_HEADER) ? 1'b1 :
+                          (state == ST_READ_SEQUENCE)  ? 1'b1 :
                           (state == ST_MOVE_PAYLOAD)   ? payload_tready :
                           (state == ST_DROP_FRAME)     ? 1'b1 :
                                                        1'b0;
@@ -117,7 +123,7 @@ module program_rx_dma_ctrl #(
                     (state == ST_WAIT_STATUS);
 
   always @(posedge clk) begin
-    if (!resetn) begin
+    if (!resetn || session_clear) begin
       state              <= ST_DISCARD_HEADER;
       discard_count      <= 3'd0;
       payload_word_count <= 10'd0;
@@ -131,8 +137,11 @@ module program_rx_dma_ctrl #(
       frame_done         <= 1'b0;
       dma_done           <= 1'b0;
       dma_error          <= 1'b0;
+      sequence_error     <= 1'b0;
       frame_length_error <= 1'b0;
       last_dma_status    <= 32'd0;
+      sequence_half      <= 1'b0;
+      sequence_word0     <= 16'b0;
     end
     else begin
       frame_done <= 1'b0;
@@ -163,7 +172,7 @@ module program_rx_dma_ctrl #(
                 // only a matching frame is allowed to post a DMA command.
                 discard_count <= 3'd0;
                 if (dest_match)
-                  state <= ST_SEND_COMMAND;
+                  state <= ST_READ_SEQUENCE;
                 else
                   state <= ST_DROP_FRAME;
               end
@@ -181,6 +190,32 @@ module program_rx_dma_ctrl #(
             discard_count <= 3'd0;
             dest_match    <= 1'b1;
             state         <= ST_DISCARD_HEADER;
+          end
+        end
+
+        ST_READ_SEQUENCE: begin
+          if (rx_transfer) begin
+            if (rx_fifo_tlast) begin
+              frame_length_error <= 1'b1;
+              sequence_half      <= 1'b0;
+              discard_count      <= 3'd0;
+              dest_match         <= 1'b1;
+              state              <= ST_DISCARD_HEADER;
+            end else if (!sequence_half) begin
+              sequence_word0 <= rx_fifo_tdata;
+              sequence_half  <= 1'b1;
+            end else begin
+              sequence_half <= 1'b0;
+              // Bytes arrive on lane 0 first. The host sequence field is
+              // network byte order, so swap bytes within both 16-bit beats.
+              if ({sequence_word0[7:0], sequence_word0[15:8],
+                   rx_fifo_tdata[7:0], rx_fifo_tdata[15:8]} != frame_count) begin
+                sequence_error <= 1'b1;
+                state          <= ST_DROP_FRAME;
+              end else begin
+                state <= ST_SEND_COMMAND;
+              end
+            end
           end
         end
 

@@ -5,8 +5,8 @@ module tb_log_frame_packetizer;
   logic resetn = 1'b0;
   always #5 clk = ~clk;
 
-  logic [1:0] event_valid, event_hart;
-  logic [1:0][15:0] event_package, event_sequence;
+  logic [3:0] event_valid, event_hart;
+  logic [3:0][15:0] event_package, event_sequence;
   logic waw_read_hart, waw_read_bank;
   logic [8:0] waw_read_index;
   logic [15:0] waw_read_package, waw_read_sequence;
@@ -82,12 +82,16 @@ module tb_log_frame_packetizer;
           22: if (tx_data != 8'h01) $fatal(1, "xor0 first");
           29: if (tx_data != 8'h08) $fatal(1, "xor0 last");
           70: if (tx_data != 8'h00) $fatal(1, "waw count hi");
-          71: if (tx_data != 8'h02) $fatal(1, "waw count lo");
+          71: if (tx_data != 8'h04) $fatal(1, "waw count lo");
           72: if (tx_data != 8'h11) $fatal(1, "waw seq0 hi");
           73: if (tx_data != 8'h22) $fatal(1, "waw seq0 lo");
           74: if (tx_data != 8'h33) $fatal(1, "waw seq1 hi");
           75: if (tx_data != 8'h44) $fatal(1, "waw seq1 lo");
-          76: if (tx_data != 8'h00) $fatal(1, "padding after WAW");
+          76: if (tx_data != 8'h55) $fatal(1, "waw seq2 hi");
+          77: if (tx_data != 8'h66) $fatal(1, "waw seq2 lo");
+          78: if (tx_data != 8'h77) $fatal(1, "waw seq3 hi");
+          79: if (tx_data != 8'h88) $fatal(1, "waw seq3 lo");
+          80: if (tx_data != 8'h00) $fatal(1, "padding after WAW");
         endcase
       end else if ((frame_count == 1) && (byte_index == 16) &&
                    (tx_data != 8'h01)) begin
@@ -117,12 +121,12 @@ module tb_log_frame_packetizer;
       event_package[0] <= package_number;
       event_sequence[0] <= sequence_number;
       @(posedge clk);
-      event_valid <= 2'b0;
+      event_valid <= 4'b0;
     end
   endtask
 
   initial begin
-    event_valid = 2'b0;
+    event_valid = 4'b0;
     event_hart = 2'b0;
     event_package = '0;
     event_sequence = '0;
@@ -142,8 +146,18 @@ module tb_log_frame_packetizer;
     repeat (5) @(posedge clk);
     resetn <= 1'b1;
     repeat (3) @(posedge clk);
-    send_waw(1'b0, 16'h0000, 16'h1122);
-    send_waw(1'b0, 16'h0000, 16'h3344);
+    // All four WAW classes may be valid together.  Prove that the store
+    // retains all four events in slot order rather than collapsing them.
+    @(posedge clk);
+    event_valid <= 4'b1111;
+    event_hart <= 4'b0000;
+    event_package <= '{default:16'h0000};
+    event_sequence[0] <= 16'h1122;
+    event_sequence[1] <= 16'h3344;
+    event_sequence[2] <= 16'h5566;
+    event_sequence[3] <= 16'h7788;
+    @(posedge clk);
+    event_valid <= 4'b0000;
 
     @(posedge clk);
     result_package[0][0] <= 16'h0000;
@@ -187,4 +201,3 @@ module tb_log_frame_packetizer;
     $fatal(1, "global simulation timeout");
   end
 endmodule
-
