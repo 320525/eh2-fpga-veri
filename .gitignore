@@ -100,3 +100,13 @@ xvlog.pb
 **/FinalUnmatchedCellsToUnplace.txt
 **/iter_*_CongestedCLBsAndNets.txt
 **/tight_setup_hold_pins.txt
+
+# Local diagnostic/staging output from the legacy integration workspace.
+# Formal RTL, scripts, testbenches and verification sources remain trackable.
+eh2fpga_veri_system/.diag/
+eh2fpga_veri_system/_*/
+eh2fpga_veri_system/build/
+eh2fpga_veri_system/stage/
+eh2fpga_veri_system/verification_log/
+eh2fpga_veri_system/query_route_design_help.tcl
+eh2fpga_veri_system/output/doc/future_rtl_host_controlled_retransmit_readme.md

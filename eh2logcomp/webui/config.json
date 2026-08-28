@@ -1,0 +1,6 @@
+{
+  "http_host": "127.0.0.1",
+  "http_port": 3205,
+  "max_program_bytes": 536870912,
+  "windows_shared_root": "D:/share/comp_log_dvspike"
+}

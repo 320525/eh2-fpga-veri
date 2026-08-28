@@ -1,0 +1,29 @@
+{
+  "generator": "generate_fast_dualhart_program.py",
+  "isa": "RV32IMAC (32-bit I/M instructions used; C/A remain enabled)",
+  "seed": 32052531,
+  "reset_vector": 2147483648,
+  "program_bytes": 80032,
+  "program_sha256": "7dcb47bc4a3d0c9be4ba1a369fa859cf806ba34509c04315a1abd55379e181c6",
+  "target_records": {
+    "hart0": 10000,
+    "hart1": 10000
+  },
+  "random_body_instructions": {
+    "hart0": 9992,
+    "hart1": 9994
+  },
+  "hart0_start_csr": "0x7fc written only by hart0",
+  "lsu_ranges": {
+    "hart0": [
+      2684354560,
+      2684356608
+    ],
+    "hart1": [
+      2684358656,
+      2684360704
+    ]
+  },
+  "stop_address": 3495428096,
+  "stop_data": 3278117
+}

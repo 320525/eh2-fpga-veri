@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EH2 板级监测与程序烧写平台</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2212%22 fill=%22%231769e0%22/><text x=%2232%22 y=%2242%22 text-anchor=%22middle%22 font-size=%2230%22 fill=%22white%22>EH</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">EH2 BOARD WEBUI</p>
+      <h1>板级监测与程序烧写平台</h1>
+    </div>
+    <div class="state-wrap">
+      <span>当前板卡状态</span>
+      <strong id="boardState" class="state disconnected">DISCONNECTED</strong>
+      <small id="lastCode">尚未收到系统信息帧</small>
+    </div>
+  </header>
+
+  <main>
+    <section class="card connection-card">
+      <div class="section-title">
+        <div><span class="step">1</span><h2>连接与持续监听</h2></div>
+        <span id="captureBadge" class="pill idle">未监听</span>
+      </div>
+      <div class="controls wide-controls">
+        <label class="grow">有线网卡
+          <select id="interfaceSelect"></select>
+        </label>
+        <button id="refreshInterfaces" class="secondary">刷新网卡</button>
+        <button id="startCapture" class="primary">开始监听</button>
+        <button id="stopCapture" class="danger-outline">停止监听</button>
+        <button id="resetBoard" class="danger-outline">复位板卡</button>
+      </div>
+      <p id="networkDiagnostic" class="hint">正在检查 Scapy 和 Npcap…</p>
+      <div class="protocol-strip">
+        <span>程序目的 MAC <b>02:12:34:56:78:FF</b></span>
+        <span>结束帧目的 MAC <b>02:32:05:25:00:FF</b></span>
+        <span>主机源 MAC <b>02:32:05:25:00:FE</b></span>
+      </div>
+    </section>
+
+    <section class="card automation-card">
+      <div class="section-title">
+        <div><span class="step">A</span><h2>双 hart 一键自动化验证</h2></div>
+        <span id="automationBadge" class="pill idle">未启动</span>
+      </div>
+      <p class="hint">WebUI 保持运行在 Windows；RISC-V DV 的生成、编译、链接和 Spike 都先在虚拟机本地完成，只把烧写所需的 <code>program.bin</code>、比较所需的 <code>spike.log</code> 与 <code>manifest.json</code> 发布到 <code>D:\share\comp_log_dvspike</code>。每轮只有在 FPGA/Spike 的全部比较和 PASS 清理完成后才释放下一轮生成屏障。</p>
+      <div class="automation-grid">
+        <label>VM地址<input id="vmHost" type="text" value="192.168.88.128"></label>
+        <label>SSH端口<input id="vmPort" type="number" value="22" min="1" max="65535"></label>
+        <label>用户名<input id="vmUser" type="text" value="mtw"></label>
+        <label>SSH密码<input id="vmPassword" type="password" autocomplete="current-password" placeholder="仅保存在本次WebUI内存"></label>
+        <label>每hart目标指令数<input id="autoInstructions" type="number" value="10000" min="1000" step="1000"></label>
+        <label>每块指令数<input id="autoChunkInstructions" type="number" value="10000" min="1000" step="1000"></label>
+        <label>并行生成进程<input id="autoWorkers" type="number" value="1" min="1" max="4"></label>
+        <div class="automation-actions">
+          <button id="startAutomation" class="accent">启动一键自动化</button>
+          <button id="stopAutomation" class="danger-outline">停止并保留本轮文件</button>
+        </div>
+      </div>
+      <div id="automationSummary" class="automation-summary">等待启动。必须先选择 FPGA 物理网卡并开始监听。</div>
+      <div class="automation-metrics" aria-label="自动化比较统计">
+        <div><span>本轮执行 / 已比较指令</span><strong id="instructionCompareCounter">0 / 0</strong></div>
+        <div><span>本自动化会话已比较指令</span><strong id="sessionComparedInstructions">0</strong></div>
+        <div><span>首条比较失败位置</span><strong id="firstFailureSequence">—</strong></div>
+      </div>
+      <p id="automationTiming" class="hint automation-timing">阶段耗时：等待启动。</p>
+      <div class="progress-track"><div id="automationProgress" class="progress-bar"></div></div>
+      <div class="progress-label"><span id="automationStage">DISABLED</span><span id="automationCounts">0 / 0 块</span></div>
+      <div class="protocol-strip">
+        <span>FPGA单文件日志 <b>fpga_info.eh2log</b></span>
+        <span>比较位置 <b>Windows</b></span>
+        <span>PASS <b>删除本轮大文件</b></span>
+        <span>FAIL <b>保留全部文件并停止</b></span>
+      </div>
+    </section>
+
+    <section class="two-column">
+      <article class="card">
+        <div class="section-title">
+          <div><span class="step">2</span><h2>PRECONFIG 通路检查</h2></div>
+        </div>
+        <p>收到 <code>11111111 PREINIT_DONE</code> 后，发送一帧1024字节全FF程序帧，并立即发送结束帧。</p>
+        <button id="sendPreconfig" class="primary full">发送 PRECONFIG 检查帧</button>
+        <p class="hint">正常结果依次为 <code>22222222 CHECK_PASS</code> 和 <code>33333333 READY</code>。</p>
+      </article>
+
+      <article class="card">
+        <div class="section-title">
+          <div><span class="step">3</span><h2>载入原始程序</h2></div>
+        </div>
+        <div class="file-row">
+          <input id="programFile" type="file" accept=".bin,application/octet-stream">
+          <button id="inspectProgram" class="secondary">检查 .bin</button>
+        </div>
+        <div id="programManifest" class="manifest empty">尚未载入程序</div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div><span class="step">4</span><h2>发送程序</h2></div>
+        <span id="txBadge" class="pill idle">发送器空闲</span>
+      </div>
+      <div class="controls">
+        <label>帧间隔（微秒）
+          <input id="interFrameUs" type="number" min="0" max="100000" value="0">
+        </label>
+        <label class="check"><input id="forceSend" type="checkbox"> 忽略状态限制（调试）</label>
+        <button id="sendProgram" class="accent">发送全部程序帧</button>
+      </div>
+      <div class="progress-track"><div id="txProgress" class="progress-bar"></div></div>
+      <div class="progress-label"><span id="txOperation">无发送任务</span><span id="txCount">0 / 0</span></div>
+      <div class="controls">
+        <button id="clearLogs" class="secondary">清理当前残留日志</button>
+        <button id="clearRunCache" class="secondary">清理运行缓存</button>
+        <button id="saveLogs" class="primary">保存当前日志快照</button>
+      </div>
+      <details class="advanced">
+        <summary>高级调试操作</summary>
+        <p>单独发送结束帧可能使板卡锁存错误帧数，只应在明确理解控制器状态时使用。</p>
+        <button id="sendEndOnly" class="danger-outline">只发送结束帧</button>
+      </details>
+    </section>
+
+    <section class="stats-grid">
+      <div class="metric"><span>接收总帧</span><strong id="rxTotal">0</strong></div>
+      <div class="metric"><span>系统信息</span><strong id="rxSystem">0</strong></div>
+      <div class="metric"><span>Info数据帧</span><strong id="rxInfoData">0</strong></div>
+      <div class="metric"><span>Info结束帧</span><strong id="rxInfoDone">0</strong></div>
+      <div class="metric"><span>非法帧</span><strong id="rxInvalid">0</strong></div>
+      <div class="metric"><span>已发送帧</span><strong id="txTotal">0</strong></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div><span class="step">5</span><h2>接收的系统信息日志</h2></div>
+        <span class="hint">按实际接收时间显示状态、通知和错误信息</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>时间戳</th><th>代码</th><th>名称</th><th>对应状态</th><th>说明</th></tr></thead>
+          <tbody id="systemMessageBody"><tr><td colspan="5" class="empty-cell">尚未收到系统信息</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div><span class="step">6</span><h2>双 hart 指令信息回传</h2></div>
+        <span class="hint">每帧1444-byte payload：帧号4 Byte + 60条×24 Byte Info Struct</span>
+      </div>
+      <div id="comparisonSummary" class="manifest empty">等待双 hart 回传</div>
+      <p class="hint"><a id="decodedInfoLink" class="inline-link" target="_blank" hidden>打开当前会话完整解码 TXT</a></p>
+      <div id="latestInfo" class="waw-panel">尚未收到指令信息记录</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>时间戳</th><th>hart</th><th>帧号</th><th>sequence</th><th>PC</th><th>指令</th><th>WAW类型</th><th>WAW取消序号</th><th>寄存器号</th><th>数据</th></tr>
+          </thead>
+          <tbody id="infoRecordBody"><tr><td colspan="10" class="empty-cell">尚未收到指令信息帧</td></tr></tbody>
+        </table>
+      </div>
+      <div id="infoDoneDetails" class="waw-panel">hart0/hart1 结束帧到达后，将核对 FPGA 声明的记录数、数据帧数和最后 sequence。</div>
+    </section>
+
+    <section class="two-column lower">
+      <article class="card">
+        <div class="section-title"><div><span class="step">7</span><h2>系统事件时间线</h2></div></div>
+        <div id="eventTimeline" class="timeline"><p class="empty-cell">尚无事件</p></div>
+      </article>
+      <article class="card">
+        <div class="section-title"><div><span class="step">8</span><h2>当前会话文件</h2></div></div>
+        <p class="hint">监听开始后，PCAP、系统状态、Info帧摘要、完整逐条Info Struct和结束帧核对结果持续保存在 webui/runtime/sessions。</p>
+        <div id="sessionFiles" class="file-list"><p class="empty-cell">尚未建立会话</p></div>
+      </article>
+    </section>
+
+    <section class="card golden-card">
+      <div class="section-title"><div><h2>20万条程序镜像基准</h2></div></div>
+      <div id="goldenSummary">正在载入黄金结果…</div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

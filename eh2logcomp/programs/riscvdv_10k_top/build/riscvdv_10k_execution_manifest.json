@@ -1,0 +1,55 @@
+{
+  "format_version": 1,
+  "seed": 32052517,
+  "isa": "RV32IMAC",
+  "harts": 2,
+  "reset_vector": 2147483648,
+  "target_instructions_per_hart": 10000,
+  "chunk_instructions": 10000,
+  "chunks": 1,
+  "generator_workers": 1,
+  "riscv_dv_root": "/home/mtw/riscv-dv",
+  "riscv_dv_commit": "b7a0b4b0b51346a3c64f159f81ea262d867c14a9",
+  "hardware_elf": "program_hardware.elf",
+  "spike_elf": "program_spike.elf",
+  "program_bin": "program.bin",
+  "program_bytes": 88040,
+  "program_sha256": "065e5af9c246a612f6504b1a77f2c7df9fffe4f19fa30c914c2faba9c351c70f",
+  "memory_layout": {
+    "program_start": 2147483648,
+    "program_end_exclusive": 2147571688,
+    "spike_program_end_exclusive": 2147571760,
+    "program_limit_exclusive": 2684354560,
+    "data_start": 2684354560,
+    "data_end_exclusive": 2684574272,
+    "data_limit_exclusive": 3489660928,
+    "lsu_base": 2684354560,
+    "lsu_limit_exclusive": 4294967296,
+    "amo_start": 4026793984,
+    "amo_end_exclusive": 4026794112,
+    "amo_limit_exclusive": 4026925056,
+    "amo_hart0_start": 4026793984,
+    "amo_hart0_end_exclusive": 4026794048,
+    "amo_hart1_start": 4026794048,
+    "amo_hart1_end_exclusive": 4026794112,
+    "data_sections_noload": true,
+    "ranges_overlap": false
+  },
+  "patches": [
+    {
+      "name": "eh2_hart_start_patch",
+      "pc": 2147483692,
+      "hardware_instruction": 2144309363
+    },
+    {
+      "name": "eh2_h0_stop_patch",
+      "pc": 2147571644,
+      "hardware_instruction": 32415779
+    },
+    {
+      "name": "eh2_h1_stop_patch",
+      "pc": 2147571664,
+      "hardware_instruction": 32415779
+    }
+  ]
+}

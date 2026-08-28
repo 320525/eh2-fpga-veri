@@ -1,0 +1,58 @@
+{
+  "algorithm": "CRC-64/ECMA-182 pair plus G/XOR/SUM",
+  "source": "artifacts\\sim\\spike_straight_200k_adjusted.log",
+  "stopped_harts": [
+    0,
+    1
+  ],
+  "commit_count": {
+    "0": 100023,
+    "1": 100021
+  },
+  "packages": [
+    {
+      "hart": 0,
+      "package": 0,
+      "count": 65536,
+      "xor0": "d31849f405d7893f",
+      "xor1": "f362cffb3bd01126",
+      "sum0": "40883202d86e0925",
+      "sum1": "c155b99763889958",
+      "sum2": "f97364871915ade9",
+      "sum3": "7ec3152548d669c5"
+    },
+    {
+      "hart": 0,
+      "package": 1,
+      "count": 34487,
+      "xor0": "ca29af3d5afed2de",
+      "xor1": "dab2dbaec7cf9013",
+      "sum0": "304dcd82a6df56f4",
+      "sum1": "594544d87138de09",
+      "sum2": "c90918dde2a98436",
+      "sum3": "86df023d8dec6168"
+    },
+    {
+      "hart": 1,
+      "package": 0,
+      "count": 65536,
+      "xor0": "aab1f91c2fb21b95",
+      "xor1": "00f6cd6d6a5b2052",
+      "sum0": "4c3220a14d9250f3",
+      "sum1": "aae0bd36625988d8",
+      "sum2": "192a127a63aaca8e",
+      "sum3": "dc2e3b96828fa6f7"
+    },
+    {
+      "hart": 1,
+      "package": 1,
+      "count": 34485,
+      "xor0": "b2c8ba18b57bb719",
+      "xor1": "1d356092b1daae53",
+      "sum0": "2f710fa64e36788d",
+      "sum1": "ee452c2062e1d3ad",
+      "sum2": "d772ad1beae8bdf4",
+      "sum3": "cfaf9594c587af03"
+    }
+  ]
+}

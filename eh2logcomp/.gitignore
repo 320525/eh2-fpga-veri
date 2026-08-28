@@ -1,0 +1,27 @@
+# Project-local generated Vivado/cache directories.
+/build/debughub_manual_run/
+/build/vivado/ooc_synth_stubs/
+/build/vivado_temp_impl*/
+/output/ip_cache/
+/output/mig_phy_cache_work*/
+
+# Keep only the canonical delivered board bitstream and its checksum manifest.
+# Routed checkpoints, reports, journals and caches remain local build products.
+/output/board/*
+!/output/board/eh2logcomp_2slot.bit
+!/output/board/SHA256SUMS.txt
+
+# Interrupted diagnostic result; the final PASS reports are tracked instead.
+/artifacts/sim/eh2_spike_partial_compare.json
+
+# WebUI captures, automation histories and per-run logs are local runtime data.
+/webui/runlog/
+/webui/runtime/automation/
+/webui/query
+
+# Local editor/diagnostic backup files are not project sources.
+*.orig
+
+# Temporary waiting helpers are not part of the reproducible build flow.
+/scripts/wait_for_file.ps1
+/scripts/wait_vivado_process.ps1

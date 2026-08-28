@@ -1,0 +1,56 @@
+{
+  "status": "PASS",
+  "structure_count": 200044,
+  "package_count": 4,
+  "packages": [
+    {
+      "hart": 0,
+      "package": 0,
+      "count": 65536,
+      "xor0": "d31849f405d7893f",
+      "xor1": "f362cffb3bd01126",
+      "sum0": "40883202d86e0925",
+      "sum1": "c155b99763889958",
+      "sum2": "f97364871915ade9",
+      "sum3": "7ec3152548d669c5",
+      "hardware_match": true
+    },
+    {
+      "hart": 0,
+      "package": 1,
+      "count": 34487,
+      "xor0": "ca29af3d5afed2de",
+      "xor1": "dab2dbaec7cf9013",
+      "sum0": "304dcd82a6df56f4",
+      "sum1": "594544d87138de09",
+      "sum2": "c90918dde2a98436",
+      "sum3": "86df023d8dec6168",
+      "hardware_match": true
+    },
+    {
+      "hart": 1,
+      "package": 0,
+      "count": 65536,
+      "xor0": "bb84a72d88908184",
+      "xor1": "77ae970cea8f03ee",
+      "sum0": "f0ba1c03f647a3d4",
+      "sum1": "07d2e3a5867b2f14",
+      "sum2": "fec9fec6bbd4da0b",
+      "sum3": "f9fc10899b8299e5",
+      "hardware_match": true
+    },
+    {
+      "hart": 1,
+      "package": 1,
+      "count": 34485,
+      "xor0": "b2c8ba18b57bb719",
+      "xor1": "1d356092b1daae53",
+      "sum0": "2f710fa64e36788d",
+      "sum1": "ee452c2062e1d3ad",
+      "sum2": "d772ad1beae8bdf4",
+      "sum3": "cfaf9594c587af03",
+      "hardware_match": true
+    }
+  ],
+  "errors": []
+}

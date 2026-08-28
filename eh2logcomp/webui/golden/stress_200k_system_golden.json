@@ -1,0 +1,21 @@
+{
+  "name": "stress_200k_dualhart_system program reference",
+  "purpose": "Program-image identity and expected Info-record scale; no CRC, hash or package comparison is performed.",
+  "program_source": "programs/stress_200k_dualhart_system/stress_200k_dualhart_system.S",
+  "program_binary": "programs/stress_200k_dualhart_system/build/stress_200k_dualhart_system.bin",
+  "program_sha256": "5D073F32602F986E6AE253F425046271C4255402067632DA7C6FFD43E4A1CCFC",
+  "program_bytes": 800640,
+  "padded_payload_bytes": 800768,
+  "program_frames": 782,
+  "expected_info_records": {
+    "0": 100023,
+    "1": 100021,
+    "total": 200044
+  },
+  "expected_info_frames": {
+    "0": 1668,
+    "1": 1668,
+    "total": 3336
+  },
+  "host_pass_rule": "For each hart: data-frame numbers and record sequences are continuous, padding is tail-only, and HxDN total_records/total_frames/last_sequence all match the frames actually captured by the host."
+}

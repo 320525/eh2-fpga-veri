@@ -341,6 +341,8 @@ PROGRAM_WRITE --> EXECUTE: 收到结束标记、结束帧前一程序帧的 DMA 
 | --- | --- | --- |
 | `0x66660011` | `ERR_NB_HART0` | hart0 nonblocking instruction buffer 冲突/溢出 |
 | `0x66660012` | `ERR_NB_HART1` | hart1 nonblocking instruction buffer 冲突/溢出 |
+| `0x66660013` | `ERR_NB_HART1` | hart0 nonblocking instruction buffer 未记录non block |
+| `0x66660014` | `ERR_NB_HART1` | hart1 nonblocking instruction buffer 未记录non block |
 | `0x66660021` | `ERR_HASH_HART0` | hart0 to-hash FIFO overflow |
 | `0x66660022` | `ERR_HASH_HART1` | hart1 to-hash FIFO overflow |
 | `0x66660033` | `ERR_TXMAC_FIFO` | TEMAC TX FIFO overflow |

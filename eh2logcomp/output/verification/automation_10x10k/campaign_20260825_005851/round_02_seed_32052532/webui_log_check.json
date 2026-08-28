@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "done": {
+    "0": {
+      "records": 10001,
+      "frames": 167,
+      "last_sequence": 10000
+    },
+    "1": {
+      "records": 10000,
+      "frames": 167,
+      "last_sequence": 9999
+    }
+  },
+  "hart0_records": 10001,
+  "hart0_data_frames": 167,
+  "hart1_records": 10000,
+  "hart1_data_frames": 167
+}

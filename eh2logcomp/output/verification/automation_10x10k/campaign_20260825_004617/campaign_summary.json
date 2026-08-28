@@ -1,0 +1,11 @@
+{
+  "campaign_id": "campaign_20260825_004617",
+  "rounds_requested": 10,
+  "program_generator": "local direct RV32IM instruction generator",
+  "strict_sequential_barrier": true,
+  "full_top_rgmii_rx_and_tx": true,
+  "rounds": [],
+  "status": "FAIL",
+  "failure": "full-top simulation did not print FULL_SYSTEM_RGMII_PASS",
+  "completed_rounds": 0
+}
